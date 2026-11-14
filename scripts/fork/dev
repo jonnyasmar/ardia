@@ -1,0 +1,35 @@
+#!/bin/bash
+# Builds the Debug app when a native file changed, then opens it on its own data folder (Metro serves the JS).
+#
+#   scripts/fork/dev [--build-only] [--force]
+#   scripts/fork/dev -h | --help
+#
+# --build-only  build, don't open
+# --force       build even when only JS changed
+#
+# Signs ad hoc (apps/browser/macos/AdHoc.xcconfig), since the project's team is upstream's, and builds against the
+# prebuilt engine nearest this checkout's engine/ unless ~/chromium-build exists. The app runs on
+# ~/Library/Application Support/Ardia Dev (ARDIA_DATA_DIR overrides it), so it never touches the Ardia you browse with.
+# Start Metro first: pnpm dev.
+set -uo pipefail
+
+open_app=1 force=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
+    --build-only) open_app="" ;;
+    --force) force=(--force) ;;
+    *) echo "dev: unknown option $1" >&2; exit 64 ;;
+  esac
+  shift
+done
+
+. "$(dirname "$0")/env.sh" || exit 1
+"$fork_repo/scripts/agent/build-app" --as jonny ${force[@]+"${force[@]}"} || exit 1
+[[ -n "$open_app" ]] || exit 0
+if ! lsof -iTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "dev: Metro isn't running on :8081 (pnpm dev)" >&2
+  exit 1
+fi
+open -n --env ARDIA_DATA_DIR="${ARDIA_DATA_DIR:-$HOME/Library/Application Support/Ardia Dev}" \
+  "$fork_repo/apps/browser/build-jonny/Build/Products/Debug/Ardia.app"

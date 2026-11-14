@@ -1,0 +1,135 @@
+#!/bin/bash
+# Builds Ardia's Release app from this checkout, signs it with your Developer ID and installs it over /Applications/Ardia.app.
+#
+#   scripts/fork/install [--identity SHA1|NAME] [--dest PATH] [--no-install]
+#   scripts/fork/install -h | --help
+#
+# --identity    codesigning identity (default: the first "Developer ID Application" in your keychain)
+# --dest        where to install (default: /Applications/Ardia.app)
+# --no-install  build and sign only, then print the app's path
+#
+# - Same bundle id as upstream (com.ardia.browser), so it opens your existing profile. The first launch asks once for
+#   "Ardia Safe Storage" in the keychain: answer Always Allow. Your Developer ID's team stays the same across builds, so
+#   it doesn't ask again.
+# - Sparkle is off (no SUFeedURL), so an upstream release never replaces it. Update with git, then run this again.
+# - No provisioning profile, so the keychain groups are left out: passkeys saved to the Chrome profile (Touch ID)
+#   aren't available. iCloud Keychain passwords and everything else work.
+# - The app it replaces moves to apps/browser/build-fork/previous/Ardia.app. Quit Ardia before installing.
+set -euo pipefail
+
+usage() { sed -n '4,5p' "$0" | sed 's/^# *//' >&2; exit 64; }
+die() { echo "install: $*" >&2; exit 1; }
+
+identity="" dest=/Applications/Ardia.app install=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
+    --no-install) install=""; shift; continue ;;
+  esac
+  [[ $# -ge 2 ]] || usage
+  case "$1" in
+    --identity) identity="$2" ;;
+    --dest) dest="$2" ;;
+    *) echo "install: unknown option $1" >&2; usage ;;
+  esac
+  shift 2
+done
+
+. "$(dirname "$0")/env.sh" || exit 1
+repo=$fork_repo
+macos="$repo/apps/browser/macos"
+ardiacore="$repo/packages/ardiacore"
+out="$repo/apps/browser/build-fork"
+dd="$out/dd"
+app="$out/Ardia.app"
+log="$out/build.log"
+
+if [[ -z "$identity" ]]; then
+  identity=$(security find-identity -v -p codesigning | awk '/"Developer ID Application/ { print $2; exit }')
+  [[ -n "$identity" ]] || die "no Developer ID Application identity in your keychain (--identity)"
+fi
+team=$(security find-identity -v -p codesigning | awk -v id="$identity" '$2 == id || index($0, id) { print; exit }' \
+  | sed -n 's/.*(\([A-Z0-9]\{10\}\))".*/\1/p')
+[[ "$team" =~ ^[A-Z0-9]{10}$ ]] || die "couldn't read the team of identity $identity"
+echo "==> Signing with $identity (team $team)"
+
+mkdir -p "$out"
+echo "==> Content blocker"
+"$ardiacore/scripts/ubo.sh" >>"$log" 2>&1
+"$ardiacore/scripts/ubol.sh" >>"$log" 2>&1
+
+echo "==> Build (Release, log: ${log#"$repo"/})"
+rm -rf "$out/Ardia.xcarchive"
+(cd "$repo/apps/browser" && "$repo/scripts/agent/locked" pod --wait 1800 -- \
+  "$repo/scripts/agent/locked" xcodebuild --wait 1800 -- xcodebuild -workspace macos/Ardia.xcworkspace -scheme Ardia-macOS \
+  -configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 ARDIACORE_STAGE_DIR="$dd/ArdiaCoreFramework" \
+  -derivedDataPath "$dd" -archivePath "$out/Ardia.xcarchive" archive) >>"$log" 2>&1 || {
+  grep -E "error:|build commands failed" -A2 "$log" | grep -v MACOSX_DEPLOYMENT_TARGET | tail -20 >&2
+  die "build failed ($log)"
+}
+rm -rf "$app"
+ditto "$out/Ardia.xcarchive/Products/Applications/Ardia.app" "$app"
+rm -rf "$out/Ardia.xcarchive"
+
+echo "==> Bundle"
+plist="$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :ArdiaForkCommit" "$plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :ArdiaForkCommit string $(git -C "$repo" rev-parse --short HEAD)$([[ -z "$(git -C "$repo" status --porcelain -- apps packages engine)" ]] || echo -dirty)" "$plist"
+mkdir -p "$app/Contents/Resources/Licenses"
+cp "$repo"/LICENSE* "$repo/NOTICE" "$app/Contents/Resources/Licenses/"
+"$ardiacore/scripts/strip-engine.sh" "$app" "$out/symbols" >>"$log" 2>&1
+"$ardiacore/scripts/prune-bundle.sh" "$app" >>"$log" 2>&1
+
+echo "==> Sign"
+sign() { codesign --force --timestamp=none --sign "$identity" "$@" >>"$log" 2>&1 || die "couldn't sign ${*: -1}"; }
+requirement() {
+  printf 'designated => anchor apple generic and identifier "%s" and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = %s)' "$1" "$team"
+}
+code_id() { codesign -dv "$1" 2>&1 | sed -n 's/^Identifier=//p'; }
+
+fw="$app/Contents/Frameworks/Chromium Framework.framework"
+fwv=$(cd "$fw/Versions/Current" && pwd -P)
+for lib in "$fwv"/Libraries/*.dylib; do sign --options runtime "$lib"; done
+for helper in "$fwv"/Helpers/*.app; do
+  case "$(basename "$helper")" in
+    *"Renderer).app") sign --options restrict,kill,runtime --entitlements "$ardiacore/scripts/signing/renderer.entitlements" "$helper" ;;
+    *"GPU).app") sign --options restrict,kill,runtime --entitlements "$ardiacore/scripts/signing/gpu.entitlements" "$helper" ;;
+    *) sign --options restrict,library,kill,runtime "$helper" ;;
+  esac
+done
+sign --options restrict,library,kill,runtime "$fwv/Helpers/chrome_crashpad_handler"
+sign --options restrict,library,kill,runtime "$fwv/Helpers/app_mode_loader"
+[[ ! -e "$fwv/Helpers/web_app_shortcut_copier" ]] || sign --options restrict,library,kill,runtime \
+  --identifier com.ardia.browser.web_app_shortcut_copier "$fwv/Helpers/web_app_shortcut_copier"
+sign "$fw"
+
+while IFS= read -r -d '' code; do
+  id=$(code_id "$code")
+  [[ -n "$id" ]] || die "$code isn't signed"
+  sign --options runtime --preserve-metadata=identifier,entitlements -r="$(requirement "$id")" "$code"
+done < <(find "$app/Contents" -depth -not -path "*/Chromium Framework.framework/*" -not -name "Chromium Framework.framework" \
+  \( -type d \( -name "*.xpc" -o -name "*.app" -o -name "*.appex" -o -name "*.framework" -o -name "*.plugin" \) \
+  -o -type f \( -name "*.dylib" -o -path "*.framework/Versions/*/Autoupdate" \) \) -print0)
+
+entitlements="$out/app.entitlements"
+cp "$macos/Ardia-macOS/Ardia.entitlements" "$entitlements"
+plutil -remove keychain-access-groups "$entitlements"
+sign --options runtime --entitlements "$entitlements" -r="$(requirement com.ardia.browser)" "$app"
+codesign --verify --deep --strict "$app" || die "the signed app doesn't verify"
+echo "    $(du -sh "$app" | cut -f1) $app ($(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist"), $(/usr/libexec/PlistBuddy -c "Print :ArdiaForkCommit" "$plist"))"
+
+[[ -n "$install" ]] || exit 0
+echo "==> Install $dest"
+if pgrep -f "^$dest/Contents/MacOS/Ardia" >/dev/null; then
+  die "Ardia is running from $dest: quit it (⌘Q) and run this again (the rebuild is incremental)"
+fi
+if [[ -d "$dest" ]]; then
+  rm -rf "$out/previous"
+  mkdir -p "$out/previous"
+  mv "$dest" "$out/previous/Ardia.app"
+fi
+ditto "$app" "$dest"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$dest"
+[[ ! -d "$out/previous/Ardia.app" ]] || /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$out/previous/Ardia.app" 2>/dev/null || true
+echo "installed $dest (the one it replaced: ${out#"$repo"/}/previous/Ardia.app)"
