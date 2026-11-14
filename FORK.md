@@ -9,6 +9,7 @@ commits (this file, `scripts/fork`, and features upstream doesn't take from outs
 | --- | --- |
 | JS dev server | `pnpm dev` (atrium: `workspace-command start metro`) |
 | Build and open the Debug app on `~/Library/Application Support/Ardia Dev` | `scripts/fork/dev` |
+| Merge upstream and update dependencies | `scripts/fork/sync` |
 | Build, sign and install the Release app as your browser | quit Ardia, then `scripts/fork/install` |
 | Hidden test instance | `scripts/agent/ac launch apps/browser/build-jonny/Build/Products/Debug/Ardia.app --data <scratch>/data` |
 
@@ -33,20 +34,22 @@ There's no Chromium tree here, so builds use the prebuilt engine nearest this ch
 engine, that change is missing until upstream publishes the next one. Don't change `engine/` here: a fork with no
 Chromium build can't build it.
 
+When the engine isn't an exact match, `scripts/fork/dev` and `install` print the engine API the app gained since it
+was built. The app calls those methods directly, so the feature behind each one crashes until a newer engine is
+published: leave it off. Example from 2026-11-14: Unload inactive profiles (an advanced setting; `sleepIdleProfile:hostedTabs:`)
+must stay on Never.
+
 ## Staying current
 
 ```sh
-git fetch upstream
-git merge upstream/main
-pnpm install
-scripts/agent/locked pod -- sh -c 'cd apps/browser/macos && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 pod install'
-scripts/fork/install
+scripts/fork/sync      # fetch upstream, merge it, pnpm install and pod install
+scripts/fork/install   # quit Ardia first
 ```
 
-`pod install` is needed only when `Podfile.lock` changed or native files were added. Use CocoaPods 1.17, as upstream
-does: the build refuses a `Pods/` written by another version. `pod install` quotes `MARKETING_VERSION` in
-`project.pbxproj`; undo that before committing
-(`sed -i '' 's/MARKETING_VERSION = "\([^"]*\)";/MARKETING_VERSION = \1;/' apps/browser/macos/Ardia.xcodeproj/project.pbxproj`).
+On a conflict, resolve it, commit, and run `scripts/fork/sync` again. A Debug build made before the pod install fails
+to link new native files (an undefined `_OBJC_CLASS_$_…`): sync installs the Pods every time for that reason. Use
+CocoaPods 1.17, as upstream does. When upstream changes the release signing (`scripts/release/export-sign.sh`), mirror
+it in `scripts/fork/install`.
 
 ## Sending a change upstream
 

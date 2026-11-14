@@ -60,8 +60,7 @@ echo "==> Content blocker"
 
 echo "==> Build (Release, log: ${log#"$repo"/})"
 rm -rf "$out/Ardia.xcarchive"
-(cd "$repo/apps/browser" && "$repo/scripts/agent/locked" pod --wait 1800 -- \
-  "$repo/scripts/agent/locked" xcodebuild --wait 1800 -- xcodebuild -workspace macos/Ardia.xcworkspace -scheme Ardia-macOS \
+(cd "$repo/apps/browser" && "$repo/scripts/agent/locked" xcodebuild --wait 1800 -- xcodebuild -workspace macos/Ardia.xcworkspace -scheme Ardia-macOS \
   -configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 ARDIACORE_STAGE_DIR="$dd/ArdiaCoreFramework" \
   -derivedDataPath "$dd" -archivePath "$out/Ardia.xcarchive" archive) >>"$log" 2>&1 || {
   grep -E "error:|build commands failed" -A2 "$log" | grep -v MACOSX_DEPLOYMENT_TARGET | tail -20 >&2
@@ -109,8 +108,13 @@ while IFS= read -r -d '' code; do
   [[ -n "$id" ]] || die "$code isn't signed"
   sign --options runtime --preserve-metadata=identifier,entitlements -r="$(requirement "$id")" "$code"
 done < <(find "$app/Contents" -depth -not -path "*/Chromium Framework.framework/*" -not -name "Chromium Framework.framework" \
+  -not -path "*/Helpers/ArdiaFairPlay.app*" \
   \( -type d \( -name "*.xpc" -o -name "*.app" -o -name "*.appex" -o -name "*.framework" -o -name "*.plugin" \) \
   -o -type f \( -name "*.dylib" -o -path "*.framework/Versions/*/Autoupdate" \) \) -print0)
+
+fairplay="$app/Contents/Helpers/ArdiaFairPlay.app"
+[[ -d "$fairplay" ]] || die "no ArdiaFairPlay.app in the build"
+sign --options restrict,library,kill,runtime --entitlements "$ardiacore/fairplay/ArdiaFairPlay.entitlements" "$fairplay"
 
 entitlements="$out/app.entitlements"
 cp "$macos/Ardia-macOS/Ardia.entitlements" "$entitlements"
