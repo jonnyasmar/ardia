@@ -93,6 +93,7 @@ export const SETTING_SPECS = {
   cmdClickCreatesTabGroup: flag(true, SYNCED),
   optShiftClickOpensInGroup: flag(true, SYNCED),
   dragToGroupInTopStrip: flag(false, SYNCED),
+  dragOntoTabSplits: flag(false, SYNCED),
   peekModifier: oneOf(["alt", "shift", "off"], "shift", SYNCED),
   peekLinksToOtherSites: flag(true, SYNCED),
   newTabLinksOpenIn: oneOf(["tab", "peek", "littleArdia"], "peek", SYNCED),

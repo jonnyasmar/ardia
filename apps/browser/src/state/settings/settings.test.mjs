@@ -15,6 +15,11 @@ test("dragging a tab onto another in the top tab strip groups them only once tur
   assert.equal(DEFAULT_SETTINGS.dragToGroupInTopStrip, false);
 });
 
+test("dropping a tab onto another splits them only once turned on, and the choice syncs", () => {
+  assert.equal(DEFAULT_SETTINGS.dragOntoTabSplits, false);
+  assert.ok(SYNCED_SETTINGS.includes("dragOntoTabSplits"));
+});
+
 test("page frame zero options and borderless mode are off by default and synced", () => {
   for (const key of ["borderlessMode", "pageFrameZeroInFullScreen", "pageFrameZeroWhenTabsHidden"]) {
     assert.equal(DEFAULT_SETTINGS[key], false, key);

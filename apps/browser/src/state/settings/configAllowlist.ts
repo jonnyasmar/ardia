@@ -13,6 +13,7 @@ export const CONFIG_SETTING_KEYS: readonly SettingKey[] = [
   "hideBookmarksBarImport", "appearance", "addressBar", "compactToolbar", "borderlessMode", "pageFrame", "pageFrameZeroInFullScreen", "pageFrameZeroWhenTabsHidden", "commandBarPlacement", "spacesFollowAppearance", "adaptTextToColor",
   "profileSwitcherIcons", "shortcuts", "openLinksInLittleArdia", "littleArdiaOpensNewTabLinks", "littleWindowGestures", "littleArdiaSize",
   "omniboxProviders", "launchActions", "commandBarStart",
+  "dragOntoTabSplits",
 ];
 
 export const CONFIG_EXCLUDED_KEYS: readonly SettingKey[] = [

@@ -180,6 +180,17 @@ function gather(s: BrowserState, anchorId: string, members: string[]): BrowserSt
   return { ...s, windows: { ...s.windows, [w.id]: window }, groups: syncGroupOrder(groups, window) };
 }
 
+export function withSplit(s: BrowserState, tabIds: string[], orientation: SplitView["orientation"] = "horizontal"): [BrowserState, string] {
+  const tabs = [...new Set(tabIds)].map((id) => s.tabs[id]).filter((t): t is Tab => !!t);
+  const first = tabs[0];
+  if (tabs.length < 2 || tabs.length > MAX_SPLIT_PANES || !first) return [s, ""];
+  if (tabs.some((t) => t.windowId !== first.windowId || t.profileId !== first.profileId)) return [s, ""];
+  const ids = tabs.map((t) => t.id);
+  const splits = removeFromSplits(s.splits, new Set(ids));
+  const split: SplitView = { id: newId("split"), windowId: first.windowId, orientation, slots: evenSlots(ids) };
+  return [gather({ ...s, splits: { ...splits, [split.id]: split } }, first.id, ids), split.id];
+}
+
 function placedAfterSplit(s: BrowserState, split: SplitView, tabId: string): BrowserState {
   const w = s.windows[split.windowId];
   if (!w || s.tabs[tabId]?.pin) return s;
@@ -219,16 +230,9 @@ export const createSplitsSlice: StateCreator<BrowserState, [], [], SplitsSlice> 
   splits: {},
 
   createSplit(tabIds, orientation = "horizontal") {
-    const s = get();
-    const tabs = [...new Set(tabIds)].map((id) => s.tabs[id]).filter((t): t is Tab => !!t);
-    const first = tabs[0];
-    if (tabs.length < 2 || tabs.length > MAX_SPLIT_PANES || !first) return "";
-    if (tabs.some((t) => t.windowId !== first.windowId || t.profileId !== first.profileId)) return "";
-    const ids = tabs.map((t) => t.id);
-    const splits = removeFromSplits(s.splits, new Set(ids));
-    const split: SplitView = { id: newId("split"), windowId: first.windowId, orientation, slots: evenSlots(ids) };
-    set(gather({ ...s, splits: { ...splits, [split.id]: split } }, first.id, ids));
-    return split.id;
+    const [next, splitId] = withSplit(get(), tabIds, orientation);
+    if (splitId) set(next);
+    return splitId;
   },
 
   openSplitPane(windowId, o = {}) {

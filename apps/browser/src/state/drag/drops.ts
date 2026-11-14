@@ -5,6 +5,7 @@ import { selectedTabIds } from "../pins/organize";
 import { canMoveGroup, movingGroup, type GroupPlacement } from "../pins/tabGrouping";
 import { groupingOnto, placing, type TabPlacement } from "../pins/placing";
 import { splitOf } from "../splits/splits";
+import { splittingOnto } from "../splits/splitOnto";
 import { addToTileFolder, tileFolderOf } from "../pins/tileFolders";
 import { entryKey } from "../sidebar/entryKey";
 
@@ -104,7 +105,7 @@ export function dropping(s: BrowserState, ids: string[], drop: Drop): BrowserSta
       return Object.keys(moved).length ? { ...s, ...moved } : s;
     }
     case "onto":
-      return groupingOnto(s, ids, drop.targetId)[0];
+      return (s.settings.dragOntoTabSplits ? splittingOnto : groupingOnto)(s, ids, drop.targetId)[0];
     case "folder":
       return addToTileFolder(s, ids, drop.ontoId, drop.beforeId);
     default:

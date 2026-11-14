@@ -157,6 +157,7 @@ export function TabsPane() {
         <SettingToggle anchor="tabs.cmdClickCreatesTabGroup" />
         <SettingToggle anchor="tabs.optShiftClickOpensInGroup" />
         <SettingToggle anchor="tabs.dragToGroupInTopStrip" />
+        <SettingToggle anchor="tabs.dragOntoTabSplits" />
         <SettingToggle anchor="tabs.autoGroupMeetingTabs" />
       </Group>
 

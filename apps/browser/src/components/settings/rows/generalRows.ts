@@ -299,6 +299,11 @@ export const generalRows = {
           description: "With tabs across the top, dropping a tab on another makes a group, and dropping it on a group adds it. Off, dragging only reorders.",
           keywords: ["drag", "drop", "group", "top tab strip", "horizontal tabs", "reorder"],
         },
+        dragOntoTabSplits: {
+          title: "Drag a tab onto another to split them",
+          description: "Dropping a tab on another tab opens the two side by side, as in Arc, instead of grouping them. Works in the sidebar, and with tabs across the top when Drag a tab onto another to group them is on.",
+          keywords: ["split view", "split screen", "side by side", "drag", "drop", "arc"],
+        },
         autoGroupMeetingTabs: { advanced: true, title: "Automatically group tabs for meetings", keywords: ["calendar", "zoom", "meet", "call"] },
       },
     },

@@ -584,6 +584,33 @@ try {
   const held = (points, n) => [...points, ...Array(n).fill(points.at(-1))];
   let folderTabs = [];
 
+  await check("sidebar: a row let go on another row's middle groups the two, and with Drag a tab onto another to split them on opens them as a split", async () => {
+    const ids = await run(`const ids = ["sa", "sb", "sc", "sd"].map((n) => st().newTab("w1", { url: "data:text/html,<title>" + n + "</title>" + n, background: true })); return settle(1000).then(() => ids);`);
+    const [a, b, c, d] = ids;
+    const made = () => run(`const mine = ${JSON.stringify(ids)}; const ours = (list) => list.some((id) => mine.includes(id));
+      return { splits: Object.values(st().splits).map((v) => v.slots.flatMap((x) => x.stack ?? [x.tabId])).filter(ours), groups: Object.values(st().groups).map((g) => g.tabIds).filter(ours) };`);
+    const dropOn = async (from, to) => {
+      const rows = await run(SIDEBAR_ROWS);
+      const src = rows.find((r) => r.id === from), dst = rows.find((r) => r.id === to);
+      assert.ok(src && dst, JSON.stringify(rows));
+      const [sx, sy] = centre(src), [dx, dy] = centre(dst), dir = Math.sign(dy - sy);
+      return drag("w1", held([[sx, sy], [sx, sy + dir * 10], [dx, dy - dir * 3], [dx, dy]], 3));
+    };
+    try {
+      await run(`st().updateSettings({ dragOntoTabSplits: false }); return settle(400);`);
+      assert.equal(await dropOn(b, a), 0, "window drags");
+      assert.deepEqual(await made(), { splits: [], groups: [[a, b]] }, "setting off: a group");
+      await run(`st().updateSettings({ dragOntoTabSplits: true }); return settle(400);`);
+      assert.equal(await dropOn(d, c), 0, "window drags");
+      const on = await made();
+      assert.deepEqual(on.groups, [[a, b]], "setting on: no new group");
+      assert.deepEqual(on.splits, [[c, d]], "setting on: one split of the two, the dropped tab on the right");
+      assert.equal(await run(`return st().windows.w1.activeTabIds[st().windows.w1.profileId];`), d, "the dropped tab is shown");
+    } finally {
+      await run(`st().updateSettings({ dragOntoTabSplits: false }); st().closeTabs(${JSON.stringify(ids)}); return settle(900);`);
+    }
+  });
+
   await check("sidebar: a tile held over another tile's centre makes a folder of the two there, as on iOS", async () => {
     folderTabs = await run(`const ids = ["fa", "fb", "fc"].map((n) => st().newTab("w1", { url: "data:text/html,<title>" + n + "</title>" + n, background: true })); st().pinTabs(ids, true); return settle(1000).then(() => ids);`);
     const [a, , cc] = folderTabs;
