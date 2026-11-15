@@ -5,6 +5,7 @@ import ExpoModulesCore
 final class FadeLabel: ExpoView {
   private let field = NSTextField(labelWithString: "")
   private let fade = CAGradientLayer()
+  private var textSize = NSSize.zero
 
   var text = "" { didSet { update() } }
   var fontSize: Double = 13 { didSet { update() } }
@@ -22,6 +23,7 @@ final class FadeLabel: ExpoView {
     field.maximumNumberOfLines = 1
     field.cell?.truncatesLastVisibleLine = false
     field.isSelectable = false
+    field.wantsLayer = true
     addSubview(field)
     fade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
     fade.startPoint = CGPoint(x: 0, y: 0.5)
@@ -53,6 +55,7 @@ final class FadeLabel: ExpoView {
     } else {
       field.stringValue = text
     }
+    textSize = field.frame(forAlignmentRect: NSRect(origin: .zero, size: field.intrinsicContentSize)).size
     relayout()
   }
 
@@ -64,11 +67,9 @@ final class FadeLabel: ExpoView {
   }
 
   private func relayout() {
-    let natural = field.intrinsicContentSize
-    let fitting = field.frame(forAlignmentRect: NSRect(origin: .zero, size: natural)).size
-    field.frame = NSRect(x: 0, y: (bounds.height - fitting.height) / 2, width: max(bounds.width, fitting.width), height: fitting.height)
-    field.wantsLayer = true
-    guard bounds.width > 0, fitting.width > bounds.width + 0.5 else {
+    let placed = NSRect(x: 0, y: (bounds.height - textSize.height) / 2, width: textSize.width, height: textSize.height)
+    if field.frame != placed { field.frame = placed }
+    guard bounds.width > 0, textSize.width > bounds.width + 0.5 else {
       field.layer?.mask = nil
       return
     }

@@ -1448,6 +1448,38 @@ index 3edcc9670a8ccb5eef44524e78445117d2416ed8..1f7951f616996941706f11b380c12051
    _sendIdleEvents = sendIdleEvents;
    if (sendIdleEvents) {
      [self startTimers];
+diff --git a/React/Modules/RCTI18nUtil.m b/React/Modules/RCTI18nUtil.m
+index 575c9e16069b6a836a2b7b3b2c781fb5202755d4..99179563876920042762c9f0760640dd702b28f3 100644
+--- a/React/Modules/RCTI18nUtil.m
++++ b/React/Modules/RCTI18nUtil.m
+@@ -9,7 +9,12 @@
+ 
+ #import <React/RCTUIKit.h> // [macOS]
+ 
+-@implementation RCTI18nUtil
++// [Ardia: the swap flag is read on every view display (cornerRadii, bordersAsInsets, borderColors), and a
++// user defaults read each time made each sidebar row's redisplay cost a preferences lookup while the sidebar was being
++// resized. It's kept here, written through by the setter, the only way it changes. Ardia]
++@implementation RCTI18nUtil {
++  BOOL _swapsLeftAndRightInRTL;
++}
+ 
+ + (instancetype)sharedInstance
+ {
+@@ -78,11 +83,12 @@
+ 
+ - (BOOL)doLeftAndRightSwapInRTL
+ {
+-  return [[NSUserDefaults standardUserDefaults] boolForKey:@"RCTI18nUtil_makeRTLFlipLeftAndRightStyles"];
++  return _swapsLeftAndRightInRTL; // [Ardia]
+ }
+ 
+ - (void)swapLeftAndRightInRTL:(BOOL)value
+ {
++  _swapsLeftAndRightInRTL = value; // [Ardia]
+   [[NSUserDefaults standardUserDefaults] setBool:value forKey:@"RCTI18nUtil_makeRTLFlipLeftAndRightStyles"];
+   [[NSUserDefaults standardUserDefaults] synchronize];
+ }
 diff --git a/React/Modules/RCTUIManager.mm b/React/Modules/RCTUIManager.mm
 index 7f1aeff436b8a51514254b72d1fb1fd1ee3b1553..dd2851fec59498902a78204041d994eda3fd7c3c 100644
 --- a/React/Modules/RCTUIManager.mm
@@ -1538,13 +1570,17 @@ index 7f1aeff436b8a51514254b72d1fb1fd1ee3b1553..dd2851fec59498902a78204041d994ed
  
  - (void)setNeedsLayout
 diff --git a/React/Views/RCTView.m b/React/Views/RCTView.m
-index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab3c4f78a0 100644
+index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f67f630e31 100644
 --- a/React/Views/RCTView.m
 +++ b/React/Views/RCTView.m
-@@ -136,6 +136,24 @@ - (RCTPlatformView *)react_findClipView // [macOS]
+@@ -136,6 +136,28 @@ static NSString *RCTRecursiveAccessibilityLabel(RCTUIView *view) // [macOS]
    return str;
  }
  
++// [Ardia: whether any view has asked to remove clipped subviews. Until one does, the clipping walk a scroll view runs
++// on every layout visits every view below it and changes nothing. Ardia]
++static BOOL ArdiaClipsSubviews;
++
 +#if TARGET_OS_OSX // [macOS
 +// [Ardia: hover follows layout. AppKit sends mouseEntered/mouseExited only when the pointer moves, so a view that
 +// lays out or scrolls under a still pointer (the next sidebar row after a close) kept its old hover state. Every view
@@ -1566,7 +1602,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
  @implementation RCTView {
    RCTUIColor *_backgroundColor; // [macOS]
    id<RCTEventDispatcherProtocol> _eventDispatcher; // [macOS]
-@@ -143,6 +161,9 @@ @implementation RCTView {
+@@ -143,6 +165,9 @@ static NSString *RCTRecursiveAccessibilityLabel(RCTUIView *view) // [macOS]
    NSTrackingArea *_trackingArea;
    BOOL _hasMouseOver;
    BOOL _mouseDownCanMoveWindow;
@@ -1576,7 +1612,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
  #endif // macOS]
    NSMutableDictionary<NSString *, NSDictionary *> *accessibilityActionsNameMap;
    NSMutableDictionary<NSString *, NSDictionary *> *accessibilityActionsLabelMap;
-@@ -784,60 +805,39 @@ - (void)viewDidMoveToWindow
+@@ -784,60 +809,43 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
    // scroll event occurs either due to trackpad/gesture based scrolling or a scrollwheel event
    // both of which would not cause the mouseExited to be invoked.
  
@@ -1587,6 +1623,10 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
 +  // each view leaving the window cost a little more the longer the app ran (profile switches, which mount and unmount
 +  // views, slowed with every switch).
 +  NSClipView *clipView = [self window] != nil ? [[self enclosingScrollView] contentView] : nil;
++  // [Ardia: a view in a scroll view's content posts no frame changes: nothing listens for them there, and posting one for
++  // every row that resizes was a tenth of the main thread while the sidebar's width was dragged. The document view still
++  // posts, as its clip view needs. Ardia]
++  self.postsFrameChangedNotifications = clipView == nil || clipView.documentView == self;
 +  if (_observesBounds && (clipView == nil || clipView != _observedClipView)) {
      [[NSNotificationCenter defaultCenter] removeObserver:self
                                                      name:NSViewBoundsDidChangeNotification
@@ -1655,7 +1695,25 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
  }
  #endif // macOS]
  
-@@ -951,6 +951,9 @@ - (void)setRemoveClippedSubviews:(BOOL)removeClippedSubviews
+@@ -900,6 +908,9 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
+   // instead of comparing the whole frame
+ 
+   if (!_removeClippedSubviews) {
++    if (!ArdiaClipsSubviews) {
++      return; // [Ardia]
++    }
+     // Use default behavior if unmounting is disabled
+     return [super react_updateClippedSubviewsWithClipRect:clipRect relativeToView:clipView];
+   }
+@@ -943,6 +954,7 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
+ 
+ - (void)setRemoveClippedSubviews:(BOOL)removeClippedSubviews
+ {
++  ArdiaClipsSubviews = ArdiaClipsSubviews || removeClippedSubviews; // [Ardia]
+   if (!removeClippedSubviews && _removeClippedSubviews) {
+     [self react_remountAllSubviews];
+   }
+@@ -951,6 +963,9 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
  
  - (void)didUpdateReactSubviews
  {
@@ -1665,7 +1723,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
    if (_removeClippedSubviews) {
      [self updateClippedSubviews];
    } else {
-@@ -1196,11 +1199,33 @@ - (void)reactSetFrame:(CGRect)frame
+@@ -1196,12 +1211,34 @@ static CGFloat RCTDefaultIfNegativeTo(CGFloat defaultValue, CGFloat x)
    // be rendered as a stretchable image, we'll need to re-render.
    // TODO: detect up-front if re-rendering is necessary
    CGSize oldSize = self.bounds.size;
@@ -1681,8 +1739,8 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
 +    [RCTView ardia_markHoverDirty]; // [Ardia: hover follows layout. Ardia]
 +  }
 +#endif // macOS]
-+}
-+
+ }
+ 
 +#if TARGET_OS_OSX
 +// [Ardia: displayLayer is the only place that copies clipsToBounds to the layer, and nothing asked for one when
 +// overflow changed. A view that stopped clipping at the same size (a group's rows once its fold animation ends)
@@ -1694,12 +1752,13 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
 +  }
 +  [super setClipsToBounds:clipsToBounds];
 +  [self.layer setNeedsDisplay];
- }
++}
 +#endif
- 
++
  - (void)displayLayer:(CALayer *)layer
  {
-@@ -1248,17 +1273,8 @@ - (void)displayLayer:(CALayer *)layer
+   if (CGSizeEqualToSize(layer.bounds.size, CGSizeZero)) {
+@@ -1248,17 +1285,8 @@ static CGFloat RCTDefaultIfNegativeTo(CGFloat defaultValue, CGFloat x)
    RCTUIColor *backgroundColor = _backgroundColor;
  #endif // macOS]
  
@@ -1719,7 +1778,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
  
    if (useIOSBorderRendering) {
      layer.cornerRadius = cornerRadii.topLeftHorizontal;
-@@ -1514,6 +1530,20 @@ - (BOOL)acceptsFirstResponder
+@@ -1514,28 +1542,228 @@ setBorderColor() setBorderColor(Top) setBorderColor(Right) setBorderColor(Bottom
  	return [self focusable] || [super acceptsFirstResponder];
  }
  
@@ -1740,7 +1799,12 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
  - (void)updateTrackingAreas
  {
    BOOL hasMouseHoverEvent = self.onMouseEnter || self.onMouseLeave;
-@@ -1522,20 +1552,203 @@ - (void)updateTrackingAreas
+-  BOOL wouldRecreateIdenticalTrackingArea = hasMouseHoverEvent && _trackingArea && NSEqualRects(self.bounds, [_trackingArea rect]);
++  // [Ardia: the area follows the view's visible rect by itself (NSTrackingInVisibleRect), so a resize keeps it: removing
++  // and adding it again for every row that resized was a fifth of the main thread while the sidebar's width was dragged.
++  // A resize under a still pointer is handled by reactSetFrame marking hover dirty. Ardia]
++  BOOL wouldRecreateIdenticalTrackingArea = hasMouseHoverEvent && _trackingArea != nil;
+ 
    if (!wouldRecreateIdenticalTrackingArea) {
      if (_trackingArea) {
        [self removeTrackingArea:_trackingArea];
@@ -1759,7 +1823,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
      }
  
      if (hasMouseHoverEvent) {
-+      NSTrackingAreaOptions options = NSTrackingActiveAlways | NSTrackingMouseEnteredAndExited | (_hasMouseOver ? NSTrackingAssumeInside : 0);
++      NSTrackingAreaOptions options = NSTrackingActiveAlways | NSTrackingMouseEnteredAndExited | NSTrackingInVisibleRect | (_hasMouseOver ? NSTrackingAssumeInside : 0); // [Ardia]
        _trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
 -                                                   options:NSTrackingActiveAlways|NSTrackingMouseEnteredAndExited
 +                                                   options:options
@@ -1925,7 +1989,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
 +  _hasMouseOver = over;
 +  if (_trackingArea) {
 +    [self removeTrackingArea:_trackingArea];
-+    NSTrackingAreaOptions options = NSTrackingActiveAlways | NSTrackingMouseEnteredAndExited | (over ? NSTrackingAssumeInside : 0);
++    NSTrackingAreaOptions options = NSTrackingActiveAlways | NSTrackingMouseEnteredAndExited | NSTrackingInVisibleRect | (over ? NSTrackingAssumeInside : 0);
 +    _trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds options:options owner:self userInfo:nil];
 +    [self addTrackingArea:_trackingArea];
 +  }
@@ -1945,7 +2009,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..8554a54819424c7b724d8400125721ab
  - (void)mouseEntered:(NSEvent *)event
  {
    _hasMouseOver = YES;
-@@ -1768,7 +1978,7 @@ - (BOOL)handleKeyboardEvent:(NSEvent *)event {
+@@ -1768,7 +1996,7 @@ setBorderColor() setBorderColor(Top) setBorderColor(Right) setBorderColor(Bottom
    static const char kRCTViewKeyboardEventEmittedKey = 0;
    NSNumber *emitted = objc_getAssociatedObject(event, &kRCTViewKeyboardEventEmittedKey);
    BOOL alreadyEmitted = [emitted boolValue];

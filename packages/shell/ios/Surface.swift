@@ -24,6 +24,7 @@ final class Surface: ExpoView {
   private let shadowMask = CAShapeLayer()
   private let borderGradient = CAGradientLayer()
   private let borderStroke = CAShapeLayer()
+  private var appliedBounds = NSRect.null
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -32,7 +33,7 @@ final class Surface: ExpoView {
 
   override func layout() {
     super.layout()
-    apply()
+    if bounds != appliedBounds { apply() }
   }
 
   override func setFrameSize(_ newSize: NSSize) {
@@ -52,6 +53,7 @@ final class Surface: ExpoView {
 
   private func apply() {
     guard let layer else { return }
+    appliedBounds = bounds
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     if borderGradient.superlayer !== layer {
@@ -93,9 +95,9 @@ final class Surface: ExpoView {
       borderGradient.isHidden = true
     }
 
-    let shape = CGPath(roundedRect: bounds, cornerWidth: surfaceRadius, cornerHeight: surfaceRadius, transform: nil)
     shadowLayer.frame = bounds
     if let shadowColor = surfaceShadowColor, surfaceShadowOpacity > 0 {
+      let shape = CGPath(roundedRect: bounds, cornerWidth: surfaceRadius, cornerHeight: surfaceRadius, transform: nil)
       shadowLayer.shadowColor = shadowColor.cgColor
       shadowLayer.shadowOpacity = Float(surfaceShadowOpacity)
       shadowLayer.shadowRadius = surfaceShadowRadius
