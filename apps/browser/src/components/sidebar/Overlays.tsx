@@ -8,12 +8,12 @@ import { IconPicker } from "./IconPicker";
 import { ProfileIconPicker } from "../profiles/ProfileIconPicker";
 import { SearchTabs } from "./SearchTabs";
 import { TabSwitcher } from "./TabSwitcher";
-import { useSidebarWidth } from "../../state/sidebar/hooks";
+import { useSavedSidebarWidth } from "../../state/sidebar/hooks";
 import { sameSize, useSettled, type Size } from "../ui/useSettled";
 
 export function SidebarOverlays({ windowWidth }: { windowWidth: number }) {
   const windowId = useWindowId();
-  const sidebarWidth = useSidebarWidth(windowId);
+  const sidebarWidth = useSavedSidebarWidth();
   const [size, setSize] = useState({ width: 0, height: 0 });
   const settleSize = useSettled((next: Size) => setSize((prev) => (sameSize(prev, next) ? prev : next)));
   useEffect(startSidebarEffects, []);

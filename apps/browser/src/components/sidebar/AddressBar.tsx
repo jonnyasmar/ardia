@@ -18,6 +18,7 @@ import { SIDEBAR_TYPE, TAB_ROW } from "./tokens";
 import { SidebarTextScope } from "./SidebarTextScope";
 import { noteEmptyTabSidebarExtensionPress } from "../../state/telemetry/usage";
 import { SidebarFieldFill } from "./SidebarField";
+import { useSidebarWidth, useSidebarWidthAs } from "../../state/sidebar/hooks";
 import { SidebarUrlField, useToolbarTab } from "../toolbar/Toolbar";
 import { HistoryButton, ReloadButton } from "../toolbar/NavButtons";
 import { GLYPH } from "../toolbar/tokens";
@@ -29,8 +30,9 @@ const { edge: EDGE } = HEADER_TOOLS;
 const LIGHTS_Y = ARC_LIGHTS_CENTER[1];
 const PLATE = 32;
 
-export function SidebarHeaderTools({ width }: { width: number }) {
+export function SidebarHeaderTools() {
   const windowId = useWindowId();
+  const width = useSidebarWidth(windowId);
   const tab = useToolbarTab(useActiveTabId());
   const palette = toolbarPalette(useTheme(), null);
   const toggleWanted = useSettings((st) => st.showSidebarButton !== false);
@@ -103,7 +105,7 @@ function NavigationButtons({
   );
 }
 
-export function SidebarAddressRow({ width, top }: { width: number; top: number }) {
+export function SidebarAddressRow({ top }: { top: number }) {
   const windowId = useWindowId();
   const tab = useToolbarTab(useActiveTabId());
   const field = useRef<View>(null);
@@ -121,9 +123,9 @@ export function SidebarAddressRow({ width, top }: { width: number; top: number }
       <SidebarTextScope>
         <ToolbarRowContext.Provider value={TOOLBAR_ROWS.regular}>
           {tab?.url ? (
-            <PageField tab={tab} windowId={windowId} width={width - 2 * layout.sidebarInset} />
+            <PageField tab={tab} windowId={windowId} />
           ) : (
-            <EmptyField windowId={windowId} tabId={tab?.id} width={width - 2 * layout.sidebarInset} />
+            <EmptyField windowId={windowId} tabId={tab?.id} />
           )}
         </ToolbarRowContext.Provider>
       </SidebarTextScope>
@@ -133,7 +135,7 @@ export function SidebarAddressRow({ width, top }: { width: number; top: number }
 
 const HOST_ROOM = 84;
 
-function PageField({ tab, windowId, width }: { tab: NonNullable<ReturnType<typeof useToolbarTab>>; windowId: string; width: number }) {
+function PageField({ tab, windowId }: { tab: NonNullable<ReturnType<typeof useToolbarTab>>; windowId: string }) {
   const palette = toolbarPalette(useTheme(), null);
   return (
     <SidebarUrlField
@@ -142,13 +144,13 @@ function PageField({ tab, windowId, width }: { tab: NonNullable<ReturnType<typeo
       windowId={windowId}
       onFocus={alreadyFocused}
       height={SIDEBAR_FIELD.height}
-      accessory={<FieldExtensions tabId={tab.id} windowId={windowId} width={width} palette={palette} />}
+      accessory={<FieldExtensions tabId={tab.id} windowId={windowId} palette={palette} />}
     />
   );
 }
 
-function FieldExtensions({ tabId, windowId, width, palette, onActivate }: { tabId: string; windowId: string; width: number; palette: ToolbarPalette; onActivate?: () => void }) {
-  const limit = extensionsFitting(width - 10 - 3 - HOST_ROOM);
+function FieldExtensions({ tabId, windowId, palette, onActivate }: { tabId: string; windowId: string; palette: ToolbarPalette; onActivate?: () => void }) {
+  const limit = useSidebarWidthAs(windowId, (width) => extensionsFitting(width - 2 * layout.sidebarInset - 10 - 3 - HOST_ROOM));
   const extensionsWidth = useToolbarExtensionsWidth(windowId, limit);
   if (!extensionsWidth) return null;
   return (
@@ -158,7 +160,7 @@ function FieldExtensions({ tabId, windowId, width, palette, onActivate }: { tabI
   );
 }
 
-function EmptyField({ windowId, tabId, width }: { windowId: string; tabId: string | undefined; width: number }) {
+function EmptyField({ windowId, tabId }: { windowId: string; tabId: string | undefined }) {
   const theme = useTheme();
   const palette = toolbarPalette(theme, null);
   const { hovered, hoverProps } = useHover();
@@ -171,7 +173,7 @@ function EmptyField({ windowId, tabId, width }: { windowId: string; tabId: strin
       </Pressable>
       {tabId ? (
         <View style={{ paddingRight: space.xs }}>
-          <FieldExtensions tabId={tabId} windowId={windowId} width={width} palette={palette} onActivate={noteEmptyTabSidebarExtensionPress} />
+          <FieldExtensions tabId={tabId} windowId={windowId} palette={palette} onActivate={noteEmptyTabSidebarExtensionPress} />
         </View>
       ) : null}
     </View>

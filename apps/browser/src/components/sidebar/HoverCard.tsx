@@ -27,7 +27,7 @@ import { hoverCardAt, sidebarEdgeOf } from "./hoverPlacement";
 import { usePeekSpan } from "../../state/windows/dockMotion";
 import { TabCardSummary } from "./TabCardSummary";
 import { useSidebarUi, type Anchor, type Hover } from "../../state/sidebar/sidebarUi";
-import { useSidebarWidth } from "../../state/sidebar/hooks";
+import { useSavedSidebarWidth } from "../../state/sidebar/hooks";
 import { TabIcon } from "./TabIcon";
 import { HoverPlayer, useShowsMiniPlayer } from "../media/HoverPlayer";
 import { useMedia, usePictureInPicture } from "../../state/media/media";
@@ -48,7 +48,7 @@ export function HoverCard({ windowId, width, height }: { windowId: string; width
   const shown = drawn ?? target;
   const player = useShowsMiniPlayer(shown?.kind === "tab" ? shown.id : undefined);
   const side = useSidebarSide(windowId);
-  const sidebarEdge = sidebarEdgeOf(side, width, useSidebarWidth(windowId), usePeekSpan(windowId));
+  const sidebarEdge = sidebarEdgeOf(side, width, useSavedSidebarWidth(), usePeekSpan(windowId));
   const frame = useMemo(() => ({ side, windowWidth: width, sidebarEdge }), [side, width, sidebarEdge]);
   useHoverCardPlacement(motion, shown ? hoverCardAt(shown.anchor, frame) : null, { width, height });
   if (!shown) return null;

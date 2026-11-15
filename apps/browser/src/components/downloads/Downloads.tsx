@@ -37,7 +37,7 @@ import { useAddressBarInSidebar, useTabLayout, useToolbarLightsCenter } from "..
 import { SIDEBAR_FOOTER_DOWNLOADS } from "../sidebar/geometry";
 import { PROFILE_DOTS_HEIGHT } from "../profiles/ProfileDots";
 import { openInternalPage } from "../../state/pages/urls";
-import { useSidebarWidth } from "../../state/sidebar/hooks";
+import { useSavedSidebarWidth } from "../../state/sidebar/hooks";
 import { hairline, shadow } from "../ui/tokens";
 import { panelGlassTint } from "../ui/Glass";
 import { DOWNLOADS_PANEL, type DownloadsPlacement } from "./downloadsPlacement";
@@ -270,7 +270,7 @@ function DownloadRow({ d, windowId }: { d: Download; windowId: string }) {
 export function DownloadMagnet() {
   const windowId = useWindowId();
   const sidebarOpen = useSidebarOpen();
-  const sidebarWidth = useSidebarWidth(windowId);
+  const sidebarWidth = useSavedSidebarWidth();
   const topStrip = useTabLayout() === "top";
   const right = useSidebarSide(windowId) === "right";
   const addressBar = useAddressBarInSidebar();

@@ -1,10 +1,10 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { ContextMenuArea, space, WindowDragRegion } from "../ui";
 import { layout } from "../ui/theme";
 import { TintInk } from "../ui/TintInk";
 import { useWindowId, useWindowProfileId } from "../../state/browser/hooks";
-import { useHasDownloads, useNoTiles } from "../../state/sidebar/hooks";
+import { useHasDownloads, useNoTiles, useSidebarWidth } from "../../state/sidebar/hooks";
 import { useAddressBarInSidebar, useToolbarLightsCenter } from "../../state/windows/layout";
 import { DownloadsButton } from "../downloads/DownloadsButton";
 import { PROFILE_INDICATOR_X, ProfileIndicator } from "../profiles/ProfileIndicator";
@@ -18,6 +18,8 @@ import type { Ghost } from "./dragModel";
 import { SidebarDropArea } from "./SidebarDropArea";
 import { FolderPanel } from "./FolderPanel";
 import { dismissHover, dismissHoverIn } from "../../state/sidebar/hover";
+import { watchSidebarResize } from "../../state/sidebar/sidebarUi";
+import { freezeOffscreenRows, thawRows } from "./resizeFreeze";
 import { PinFieldZone, PinSlotZone } from "./PinnedGrid";
 import { bottomFieldBand, SIDEBAR_FIELD, SIDEBAR_FIELD_BOTTOM, SIDEBAR_FOOTER_DOWNLOADS, sidebarHeaderOf } from "./geometry";
 import { useNewTabAtTop, useSidebarField, useSidebarPart } from "../../state/sidebar/chrome";
@@ -31,7 +33,7 @@ import { useRevealTabs } from "./useRevealTabs";
 
 const HEADER_RIGHT = space.m;
 
-export function Sidebar({ width }: { width: number }) {
+export function Sidebar() {
   const windowId = useWindowId();
   const current = useWindowProfileId();
   const { pages, paging } = usePagerPages(windowId);
@@ -66,12 +68,24 @@ export function Sidebar({ width }: { width: number }) {
   }, []);
   const onScrollY = useCallback((y: number) => {
     scrollY.current = y;
-    if (drag.current) drag.current.scrollY = y;
+    if (drag.current) {
+      if (drag.current.scrollY !== y) thawRows(drag.current);
+      drag.current.scrollY = y;
+    }
     dismissHover();
     closeFolderPanel();
   }, []);
 
   useRevealTabs(windowId, scroll, scrollY, geometry);
+  useEffect(
+    () =>
+      watchSidebarResize(windowId, (resizing) => {
+        if (!drag.current) return;
+        if (resizing) void freezeOffscreenRows(drag.current);
+        else thawRows(drag.current);
+      }),
+    [windowId],
+  );
   useLayoutEffect(() => dismissHoverIn(windowId), [windowId, current, paging]);
 
   return (
@@ -84,7 +98,7 @@ export function Sidebar({ width }: { width: number }) {
             ref={(v) => {
               controller.root = v;
             }}
-            style={{ width, height: "100%" }}
+            style={{ width: "100%", height: "100%" }}
           >
             <View
               style={{
@@ -103,7 +117,6 @@ export function Sidebar({ width }: { width: number }) {
                     profileId={page.id}
                     slot={page.slot}
                     paging={paging}
-                    width={width}
                     current={page.id === current}
                     resting={!!page.resting}
                     dockAbove={dockAbove}
@@ -120,8 +133,8 @@ export function Sidebar({ width }: { width: number }) {
               {footer ? (
                 <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: footer }}>
                   <ContextMenuArea style={StyleSheet.absoluteFill} onContextMenu={() => void openSidebarMenu(windowId)} />
-                  {field === "bottom" ? <SidebarAddressRow width={width} top={SIDEBAR_FIELD_BOTTOM.above} /> : null}
-                  {dots ? <View style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><ProfileDots windowId={windowId} width={width} besideDownloads={footerDownloads} /></View> : null}
+                  {field === "bottom" ? <SidebarAddressRow top={SIDEBAR_FIELD_BOTTOM.above} /> : null}
+                  {dots ? <View style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><ProfileDots windowId={windowId} besideDownloads={footerDownloads} /></View> : null}
                   {footerDownloads ? (
                     <View style={{ position: "absolute", left: SIDEBAR_FOOTER_DOWNLOADS.left, bottom: SIDEBAR_FOOTER_DOWNLOADS.bottom }}>
                       <DownloadsButton windowId={windowId} />
@@ -136,12 +149,12 @@ export function Sidebar({ width }: { width: number }) {
                 </ContextMenuArea>
                 {addressBar ? (
                   <>
-                    <SidebarHeaderTools width={width} />
-                    {field === "top" ? <SidebarAddressRow width={width} top={SIDEBAR_FIELD.top} /> : null}
+                    <SidebarHeaderTools />
+                    {field === "top" ? <SidebarAddressRow top={SIDEBAR_FIELD.top} /> : null}
                   </>
                 ) : (
                   <View pointerEvents="box-none" style={{ height: header, flexDirection: "row", alignItems: "flex-start", paddingLeft: PROFILE_INDICATOR_X, paddingRight: HEADER_RIGHT, paddingTop: lightsY - 17 }}>
-                    {profileShown ? <ProfileIndicator room={width - PROFILE_INDICATOR_X - HEADER_RIGHT - (hasDownloads ? SIDEBAR_FOOTER_DOWNLOADS.size + 2 : 0)} /> : null}
+                    {profileShown ? <HeaderProfile windowId={windowId} hasDownloads={hasDownloads} /> : null}
                     <View pointerEvents="none" style={{ flex: 1 }} />
                     {hasDownloads ? <DownloadsButton windowId={windowId} /> : null}
                   </View>
@@ -166,4 +179,9 @@ export function Sidebar({ width }: { width: number }) {
       }}
     </DragProvider>
   );
+}
+
+function HeaderProfile({ windowId, hasDownloads }: { windowId: string; hasDownloads: boolean }) {
+  const width = useSidebarWidth(windowId);
+  return <ProfileIndicator room={width - PROFILE_INDICATOR_X - HEADER_RIGHT - (hasDownloads ? SIDEBAR_FOOTER_DOWNLOADS.size + 2 : 0)} />;
 }

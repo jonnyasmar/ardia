@@ -7,7 +7,7 @@ import { folderMenuOpen, openFolderMenu, toggleFolderMenu, useFolderMenus } from
 import { useWindowId } from "../../state/browser/hooks";
 import { openImport } from "../../state/settings/settingsWindows";
 import { Favicon } from "../favicon/Favicon";
-import { useSidebarWidth } from "../../state/sidebar/hooks";
+import { useSavedSidebarWidth } from "../../state/sidebar/hooks";
 import type { SidebarEdge } from "../../state/bookmarks/sidebarEdge";
 import { ContextMenuArea, MouseArea, Symbol, Text, useHover, useTheme } from "../ui";
 import { openBarMenu, openImportButtonMenu, type ClickMods } from "../../state/bookmarks/barMenus";
@@ -71,7 +71,7 @@ export const BarItem = memo(function BarItem({
 }) {
   const node = useBookmarks((b) => b.nodes[id]);
   const size = useBarSize();
-  const width = useSidebarWidth(windowId);
+  const width = useSavedSidebarWidth();
   const sidebarEdge = useSidebarEdge(windowId, width);
   const edge = useRef(sidebarEdge);
   edge.current = sidebarEdge;

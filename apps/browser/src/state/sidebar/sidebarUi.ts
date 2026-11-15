@@ -11,7 +11,6 @@ type SidebarUi = {
   hover: Hover | null;
   searchTabs: string | null;
   switcher: { windowId: string; ids: string[]; index: number; visible: boolean } | null;
-  dragWidth: Record<string, number>;
 };
 
 export const useSidebarUi = create<SidebarUi>()(() => ({
@@ -20,17 +19,28 @@ export const useSidebarUi = create<SidebarUi>()(() => ({
   hover: null,
   searchTabs: null,
   switcher: null,
-  dragWidth: {},
 }));
 
 export const sidebarUi = () => useSidebarUi.getState();
 export const setSidebarUi = (patch: Partial<SidebarUi>) => useSidebarUi.setState(patch);
 
-export function setLiveSidebarWidth(windowId: string, width: number | null) {
-  useSidebarUi.setState((u) => {
-    const { [windowId]: _, ...rest } = u.dragWidth;
-    return { dragWidth: width === null ? rest : { ...rest, [windowId]: Math.round(width * 2) / 2 } };
+export const useSidebarResize = create<{ widths: Record<string, number> }>()(() => ({ widths: {} }));
+
+export const sidebarResizing = (windowId: string) => windowId in useSidebarResize.getState().widths;
+
+export function watchSidebarResize(windowId: string, changed: (resizing: boolean) => void) {
+  let resizing = sidebarResizing(windowId);
+  return useSidebarResize.subscribe((r) => {
+    if (windowId in r.widths !== resizing) changed((resizing = !resizing));
   });
+}
+
+export function setLiveSidebarWidth(windowId: string, width: number | null) {
+  const shown = width === null ? undefined : Math.round(width * 2) / 2;
+  const { widths } = useSidebarResize.getState();
+  if (widths[windowId] === shown) return;
+  const { [windowId]: _, ...rest } = widths;
+  useSidebarResize.setState({ widths: shown === undefined ? rest : { ...rest, [windowId]: shown } });
 }
 
 const rows = new Map<string, Map<string, View>>();
