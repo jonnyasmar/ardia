@@ -53,6 +53,7 @@ export const PROTECTED_VIDEO_SITES: readonly string[] = [
   "hotstar.com",
   "jiohotstar.com",
   "v.qq.com",
+  "tv.youtube.com",
 ];
 
 export const FAIRPLAY_IN_CHROMIUM_ORIGINS: readonly string[] = ["https://open.spotify.com"];
