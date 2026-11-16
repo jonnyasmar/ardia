@@ -14,6 +14,7 @@ const BROOM = require("../../../assets/tidy-broom.png");
 const DIA_DIVIDER_SIDE = 6.5;
 const CLEAR_DIVIDER_HEIGHT = 2 * DIA_DIVIDER_SIDE + 1;
 const PADDING = TAB_ROW.contentLeft;
+const DASH_BOX_HEIGHT = 8;
 const ACTIONS_DIVIDER = { marginLeft: space.m } as const;
 
 type PinnedFold = { collapsed: boolean; open: Animated.Value };
@@ -40,7 +41,7 @@ export const ClearDivider = memo(function ClearDivider({ windowId, profileId, li
       >
         {pinned ? <HoverSlot hovered={foldShown} width="content" reserve="hover" align="start" hover={<FoldButton pinned={pinned} onPress={() => togglePinnedFold(profileId)} />} /> : null}
         <View style={{ flex: 1, height: 1, overflow: "hidden" }}>
-          <View style={{ position: "absolute", left: 0, top: -1, width: SIDEBAR_MAX_WIDTH, height: 2, borderBottomWidth: 1, borderStyle: "dashed", borderColor: theme.pinnedDivider }} />
+          <View style={{ position: "absolute", left: 0, bottom: 0, width: SIDEBAR_MAX_WIDTH, height: DASH_BOX_HEIGHT, borderBottomWidth: 1, borderStyle: "dashed", borderColor: theme.pinnedDivider }} />
         </View>
         {actions ? (
           <HoverSlot

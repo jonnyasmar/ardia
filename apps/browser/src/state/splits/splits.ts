@@ -1,4 +1,5 @@
 import type { StateCreator } from "zustand";
+import { PLATFORM_FEATURES } from "../../lib/platformFeatures";
 import type { BrowserState } from "../browser/store";
 import { innermostGroupOf, leaveGroups, syncGroupOrder } from "../groups/groups";
 import { inPinnedContainer, isPinnedRow, newId, tabLayoutOf } from "../browser/model";
@@ -33,9 +34,14 @@ export type OpenPaneOptions = {
   adoptId?: AdoptId;
   inPlaceOf?: string;
 };
-export type OpenPaneResult = { ok: true; tabId: string; splitId: string } | { ok: false; reason: "max" | "invalid" };
+export type OpenPaneResult = { ok: true; tabId: string; splitId: string } | { ok: false; reason: "max" | "invalid" | "unavailable" };
 
 export const MAX_SPLIT_PANES = 3;
+
+export const splitViewAvailable = PLATFORM_FEATURES.splitView;
+
+export const splitsWhereUnavailable = (s: Pick<BrowserState, "splits">, available = splitViewAvailable): Pick<BrowserState, "splits"> | null =>
+  available || !Object.keys(s.splits).length ? null : { splits: {} };
 
 export function paneChunks(ids: string[]): string[][] {
   const out: string[][] = [];
@@ -181,6 +187,7 @@ function gather(s: BrowserState, anchorId: string, members: string[]): BrowserSt
 }
 
 export function withSplit(s: BrowserState, tabIds: string[], orientation: SplitView["orientation"] = "horizontal"): [BrowserState, string] {
+  if (!splitViewAvailable) return [s, ""];
   const tabs = [...new Set(tabIds)].map((id) => s.tabs[id]).filter((t): t is Tab => !!t);
   const first = tabs[0];
   if (tabs.length < 2 || tabs.length > MAX_SPLIT_PANES || !first) return [s, ""];
@@ -236,6 +243,7 @@ export const createSplitsSlice: StateCreator<BrowserState, [], [], SplitsSlice> 
   },
 
   openSplitPane(windowId, o = {}) {
+    if (!splitViewAvailable) return { ok: false, reason: "unavailable" };
     let s = get();
     const w = s.windows[windowId];
     const anchorId = o.anchorTabId ?? (w ? w.activeTabIds[w.profileId] : undefined);

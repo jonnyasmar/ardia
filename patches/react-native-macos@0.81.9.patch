@@ -11,6 +11,94 @@ index 1ae22ed66776941c33b2c0a78038b2b997506aa7..632a0f284e88e2d3034f3eeb50cf2acf
          selection?.start ?? -1,
          selection?.end ?? -1,
        );
+diff --git a/Libraries/Image/RCTImageView.mm b/Libraries/Image/RCTImageView.mm
+index 879e36bc2483226756011b21948f2dd1760d7cf8..bc861ed4b95cbcf7cd787cf9a8d7e47ad87f0184 100644
+--- a/Libraries/Image/RCTImageView.mm
++++ b/Libraries/Image/RCTImageView.mm
+@@ -17,6 +17,15 @@
+ #import <React/RCTUtils.h>
+ #import <React/UIView+React.h>
+ 
++#if TARGET_OS_OSX // [macOS
++// [Ardia: an image is decoded for the view's own backing density, which includes the interface size its root is drawn
++// at, and loads again when that size changes. Ardia]
++static CGFloat ArdiaBackingDensity(NSView *view)
++{
++  return view.window != nil ? [view convertSizeToBacking:NSMakeSize(1, 1)].width : [NSScreen mainScreen].backingScaleFactor;
++}
++#endif // macOS]
++
+ /**
+  * Determines whether an image of `currentSize` should be reloaded for display
+  * at `idealSize`.
+@@ -149,6 +158,12 @@ - (instancetype)initWithBridge:(RCTBridge *)bridge
+     _imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+     [self addSubview:_imageView];
+ 
++#if TARGET_OS_OSX // [macOS
++    [[NSNotificationCenter defaultCenter] addObserver:self
++                                             selector:@selector(ardia_interfaceScaleDidChange:)
++                                                 name:@"ArdiaInterfaceScaleDidChange"
++                                               object:nil]; // [Ardia]
++#endif // macOS]
+ #if !TARGET_OS_OSX // [macOS]
+     NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+     [center addObserver:self
+@@ -197,7 +212,7 @@ - (void)updateWithImage:(RCTPlatformImage *)image // [macOS]
+     image.resizingMode = NSImageResizingModeTile;
+   } else if (_resizeMode == RCTResizeModeCover) {
+     if (!NSEqualSizes(self.bounds.size, NSZeroSize)) {
+-      image = RCTFillImagePreservingAspectRatio(image, self.bounds.size, self.window.backingScaleFactor ?: 1.0);
++      image = RCTFillImagePreservingAspectRatio(image, self.bounds.size, self.window != nil ? ArdiaBackingDensity(self) : 1.0); // [Ardia]
+     }
+ #endif // macOS]
+   } else if (!UIEdgeInsetsEqualToEdgeInsets(UIEdgeInsetsZero, _capInsets)) {
+@@ -363,7 +378,7 @@ - (RCTImageSource *)imageSourceForSize:(CGSize)size
+ #if !TARGET_OS_OSX // [macOS]
+   const CGFloat scale = RCTScreenScale();
+ #else // [macOS
+-  const CGFloat scale = self.window != nil ? self.window.backingScaleFactor : [NSScreen mainScreen].backingScaleFactor;
++  const CGFloat scale = ArdiaBackingDensity(self); // [Ardia]
+ #endif // macOS]
+   const CGFloat targetImagePixels = size.width * size.height * scale * scale;
+ 
+@@ -429,7 +444,7 @@ - (void)reloadImage
+ #if !TARGET_OS_OSX // [macOS]
+     CGFloat imageScale = RCTScreenScale();
+ #else // [macOS
+-    CGFloat imageScale = self.window != nil ? self.window.backingScaleFactor : [NSScreen mainScreen].backingScaleFactor;
++    CGFloat imageScale = ArdiaBackingDensity(self); // [Ardia]
+ #endif // macOS]
+     if (!UIEdgeInsetsEqualToEdgeInsets(_capInsets, UIEdgeInsetsZero)) {
+       // Don't resize images that use capInsets
+@@ -558,7 +573,7 @@ - (void)reactSetFrame:(CGRect)frame
+         imageSize, imageScale, frame.size, RCTScreenScale(), RCTResizeModeFromUIViewContentMode(self.contentMode), YES);
+ #else // [macOS
+     CGSize idealSize = RCTTargetSize(
+-        imageSize, imageScale, frame.size, RCTScreenScale(), RCTResizeModeFromUIViewContentMode(_imageView.contentMode), YES);
++        imageSize, imageScale, frame.size, ArdiaBackingDensity(self), RCTResizeModeFromUIViewContentMode(_imageView.contentMode), YES); // [Ardia]
+ #endif // macOS]
+ 
+     // Don't reload if the current image or target image size is close enough
+@@ -621,8 +636,18 @@ - (void)didMoveToWindow
+ #if TARGET_OS_OSX // [macOS
+ - (void)viewDidChangeBackingProperties
+ {
++  [super viewDidChangeBackingProperties]; // [Ardia]
+   [self reloadImage];
+ }
++
++// [Ardia
++- (void)ardia_interfaceScaleDidChange:(__unused NSNotification *)notification
++{
++  if (self.window != nil) {
++    [self reloadImage];
++  }
++}
++// Ardia]
+   
+ - (RCTPlatformView *)reactAccessibilityElement
+ {
 diff --git a/Libraries/Network/RCTNetworkTask.h b/Libraries/Network/RCTNetworkTask.h
 index a413a2888789daa1a4230e301ec21af5ec203488..857bd369ad19670a96f80aa08423c3b46936061e 100644
 --- a/Libraries/Network/RCTNetworkTask.h
@@ -1466,7 +1554,7 @@ index 575c9e16069b6a836a2b7b3b2c781fb5202755d4..99179563876920042762c9f0760640dd
  
  + (instancetype)sharedInstance
  {
-@@ -78,11 +83,12 @@
+@@ -78,11 +83,12 @@ - (void)forceRTL:(BOOL)rtlStatus
  
  - (BOOL)doLeftAndRightSwapInRTL
  {
@@ -1481,7 +1569,7 @@ index 575c9e16069b6a836a2b7b3b2c781fb5202755d4..99179563876920042762c9f0760640dd
    [[NSUserDefaults standardUserDefaults] synchronize];
  }
 diff --git a/React/Modules/RCTUIManager.mm b/React/Modules/RCTUIManager.mm
-index 7f1aeff436b8a51514254b72d1fb1fd1ee3b1553..dd2851fec59498902a78204041d994eda3fd7c3c 100644
+index 7f1aeff436b8a51514254b72d1fb1fd1ee3b1553..73a9a9893d6700ebcbd7bdfc963116cf27478aef 100644
 --- a/React/Modules/RCTUIManager.mm
 +++ b/React/Modules/RCTUIManager.mm
 @@ -7,6 +7,9 @@
@@ -1569,11 +1657,44 @@ index 7f1aeff436b8a51514254b72d1fb1fd1ee3b1553..dd2851fec59498902a78204041d994ed
  }
  
  - (void)setNeedsLayout
+@@ -1458,11 +1511,28 @@ - (void)_dispatchPropsDidChangeEvents
+     }
+ 
+     // Return frame coordinates in window
+-    CGRect windowFrame = [view convertRect:view.bounds toView:nil];
+ #if TARGET_OS_OSX // [macOS
+-    //The macOS default coordinate system has its origin at the lower left of the drawing area, so we need to flip the y-axis coordinate.
+-    windowFrame.origin.y = view.window.contentView.frame.size.height - windowFrame.origin.y - windowFrame.size.height;
+-#endif // macOS]
++    // [Ardia: the answer is in the owning React root's points from its top left, like every other number JS has. A
++    // window whose root is drawn at an interface size keeps root bounds = frame / scale, so window points would be
++    // scaled while layout and touches are not. A view outside any root keeps the window answer. Ardia]
++    RCTPlatformView *rootView = view;
++    while (rootView.superview && ![rootView isReactRootView]) {
++      rootView = rootView.superview;
++    }
++    CGRect windowFrame;
++    if ([rootView isReactRootView]) {
++      windowFrame = [view convertRect:view.bounds toView:rootView];
++      if (![rootView isFlipped]) {
++        windowFrame.origin.y = rootView.bounds.size.height - windowFrame.origin.y - windowFrame.size.height;
++      }
++    } else {
++      windowFrame = [view convertRect:view.bounds toView:nil];
++      //The macOS default coordinate system has its origin at the lower left of the drawing area, so we need to flip the y-axis coordinate.
++      windowFrame.origin.y = view.window.contentView.frame.size.height - windowFrame.origin.y - windowFrame.size.height;
++    }
++#else // macOS]
++    CGRect windowFrame = [view convertRect:view.bounds toView:nil];
++#endif // [macOS]
+     
+     callback(@[
+       @(windowFrame.origin.x),
 diff --git a/React/Views/RCTView.m b/React/Views/RCTView.m
-index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f67f630e31 100644
+index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..7b562f973a2b2b027e1077a8ca17d3c4bedb8dce 100644
 --- a/React/Views/RCTView.m
 +++ b/React/Views/RCTView.m
-@@ -136,6 +136,28 @@ static NSString *RCTRecursiveAccessibilityLabel(RCTUIView *view) // [macOS]
+@@ -136,6 +136,50 @@ - (RCTPlatformView *)react_findClipView // [macOS]
    return str;
  }
  
@@ -1599,10 +1720,32 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
 +#endif
 +#endif // macOS]
 +
++#if TARGET_OS_OSX // [macOS
++// [Ardia: a border image is drawn at the view's own backing density, which includes the interface size its root is
++// drawn at, and is drawn again when that size changes; an ancestor's bounds change never reaches the view itself. Ardia]
++static NSHashTable<RCTView *> *ArdiaBorderImageViews(void)
++{
++  static NSHashTable<RCTView *> *views;
++  static dispatch_once_t once;
++  dispatch_once(&once, ^{
++    views = [NSHashTable weakObjectsHashTable];
++    [[NSNotificationCenter defaultCenter] addObserverForName:@"ArdiaInterfaceScaleDidChange"
++                                                      object:nil
++                                                       queue:[NSOperationQueue mainQueue]
++                                                  usingBlock:^(__unused NSNotification *notification) {
++                                                    for (RCTView *view in views.allObjects) {
++                                                      [view.layer setNeedsDisplay];
++                                                    }
++                                                  }];
++  });
++  return views;
++}
++#endif // macOS]
++
  @implementation RCTView {
    RCTUIColor *_backgroundColor; // [macOS]
    id<RCTEventDispatcherProtocol> _eventDispatcher; // [macOS]
-@@ -143,6 +165,9 @@ static NSString *RCTRecursiveAccessibilityLabel(RCTUIView *view) // [macOS]
+@@ -143,6 +187,9 @@ @implementation RCTView {
    NSTrackingArea *_trackingArea;
    BOOL _hasMouseOver;
    BOOL _mouseDownCanMoveWindow;
@@ -1612,7 +1755,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
  #endif // macOS]
    NSMutableDictionary<NSString *, NSDictionary *> *accessibilityActionsNameMap;
    NSMutableDictionary<NSString *, NSDictionary *> *accessibilityActionsLabelMap;
-@@ -784,60 +809,43 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
+@@ -784,60 +831,43 @@ - (void)viewDidMoveToWindow
    // scroll event occurs either due to trackpad/gesture based scrolling or a scrollwheel event
    // both of which would not cause the mouseExited to be invoked.
  
@@ -1695,7 +1838,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
  }
  #endif // macOS]
  
-@@ -900,6 +908,9 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
+@@ -900,6 +930,9 @@ - (void)react_updateClippedSubviewsWithClipRect:(CGRect)clipRect relativeToView:
    // instead of comparing the whole frame
  
    if (!_removeClippedSubviews) {
@@ -1705,7 +1848,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
      // Use default behavior if unmounting is disabled
      return [super react_updateClippedSubviewsWithClipRect:clipRect relativeToView:clipView];
    }
-@@ -943,6 +954,7 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
+@@ -943,6 +976,7 @@ - (void)react_updateClippedSubviewsWithClipRect:(CGRect)clipRect relativeToView:
  
  - (void)setRemoveClippedSubviews:(BOOL)removeClippedSubviews
  {
@@ -1713,7 +1856,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
    if (!removeClippedSubviews && _removeClippedSubviews) {
      [self react_remountAllSubviews];
    }
-@@ -951,6 +963,9 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithCoder : unused)
+@@ -951,6 +985,9 @@ - (void)setRemoveClippedSubviews:(BOOL)removeClippedSubviews
  
  - (void)didUpdateReactSubviews
  {
@@ -1723,7 +1866,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
    if (_removeClippedSubviews) {
      [self updateClippedSubviews];
    } else {
-@@ -1196,12 +1211,34 @@ static CGFloat RCTDefaultIfNegativeTo(CGFloat defaultValue, CGFloat x)
+@@ -1196,11 +1233,41 @@ - (void)reactSetFrame:(CGRect)frame
    // be rendered as a stretchable image, we'll need to re-render.
    // TODO: detect up-front if re-rendering is necessary
    CGSize oldSize = self.bounds.size;
@@ -1739,9 +1882,17 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
 +    [RCTView ardia_markHoverDirty]; // [Ardia: hover follows layout. Ardia]
 +  }
 +#endif // macOS]
- }
- 
++}
++
 +#if TARGET_OS_OSX
++- (void)viewDidChangeBackingProperties
++{
++  [super viewDidChangeBackingProperties];
++  if ([ArdiaBorderImageViews() containsObject:self]) { // [Ardia: a border image follows the new backing density. Ardia]
++    [self.layer setNeedsDisplay];
++  }
++}
++
 +// [Ardia: displayLayer is the only place that copies clipsToBounds to the layer, and nothing asked for one when
 +// overflow changed. A view that stopped clipping at the same size (a group's rows once its fold animation ends)
 +// kept masking its children, which cut the selected row's glow. Ardia]
@@ -1752,13 +1903,12 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
 +  }
 +  [super setClipsToBounds:clipsToBounds];
 +  [self.layer setNeedsDisplay];
-+}
+ }
 +#endif
-+
+ 
  - (void)displayLayer:(CALayer *)layer
  {
-   if (CGSizeEqualToSize(layer.bounds.size, CGSizeZero)) {
-@@ -1248,17 +1285,8 @@ static CGFloat RCTDefaultIfNegativeTo(CGFloat defaultValue, CGFloat x)
+@@ -1248,17 +1315,8 @@ - (void)displayLayer:(CALayer *)layer
    RCTUIColor *backgroundColor = _backgroundColor;
  #endif // macOS]
  
@@ -1778,7 +1928,19 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
  
    if (useIOSBorderRendering) {
      layer.cornerRadius = cornerRadii.topLeftHorizontal;
-@@ -1514,28 +1542,228 @@ setBorderColor() setBorderColor(Top) setBorderColor(Right) setBorderColor(Bottom
+@@ -1293,9 +1351,10 @@ - (void)displayLayer:(CALayer *)layer
+   layer.contents = (id)image.CGImage;
+   layer.contentsScale = image.scale;
+ #else // [macOS
+-  CGFloat scaleFactor = self.window.backingScaleFactor;
++  CGFloat scaleFactor = self.window != nil ? [self convertSizeToBacking:NSMakeSize(1, 1)].width : 0; // [Ardia]
+   layer.contents = [image layerContentsForContentsScale:scaleFactor];
+   layer.contentsScale = scaleFactor;
++  [ArdiaBorderImageViews() addObject:self]; // [Ardia]
+ #endif // macOS]
+   layer.needsDisplayOnBoundsChange = YES;
+   layer.magnificationFilter = kCAFilterNearest;
+@@ -1514,28 +1573,228 @@ - (BOOL)acceptsFirstResponder
  	return [self focusable] || [super acceptsFirstResponder];
  }
  
@@ -1833,19 +1995,19 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
 +      if (_hasMouseOver) {
 +        [RCTView ardia_markHoverDirty]; // [Ardia: hover follows layout: the resized view may have left the pointer. Ardia]
 +      }
-+    }
-+  }
-+
+     }
+   }
+ 
 +  // [Ardia: hover follows layout: the views the check looks at. Ardia]
 +  if (hasMouseHoverEvent) {
 +    if (ArdiaHoverViews == nil) {
 +      ArdiaHoverViews = [NSHashTable weakObjectsHashTable];
-     }
++    }
 +    [ArdiaHoverViews addObject:self];
 +  } else {
 +    [ArdiaHoverViews removeObject:self];
-   }
- 
++  }
++
    [super updateTrackingAreas];
  }
  
@@ -2009,7 +2171,7 @@ index 0a4efc1fff0a6e32ea1634ab5f863c211f452409..a1353128272ea3d0245ecd5e1830f6f6
  - (void)mouseEntered:(NSEvent *)event
  {
    _hasMouseOver = YES;
-@@ -1768,7 +1996,7 @@ setBorderColor() setBorderColor(Top) setBorderColor(Right) setBorderColor(Bottom
+@@ -1768,7 +2027,7 @@ - (BOOL)handleKeyboardEvent:(NSEvent *)event {
    static const char kRCTViewKeyboardEventEmittedKey = 0;
    NSNumber *emitted = objc_getAssociatedObject(event, &kRCTViewKeyboardEventEmittedKey);
    BOOL alreadyEmitted = [emitted boolValue];
@@ -2106,3 +2268,40 @@ index 30c4f1e53e7b94016c8ed1b425587753fc80c2ce..1fe8dd641c9c0135f43960e4cc57a0fa
    // Enable edge antialiasing in rotation, skew, or perspective transforms
    view.layer.allowsEdgeAntialiasing = transform.m12 != 0.0f || transform.m21 != 0.0f || transform.m34 != 0.0f;
  }
+diff --git a/ReactCommon/yoga/yoga/algorithm/PixelGrid.cpp b/ReactCommon/yoga/yoga/algorithm/PixelGrid.cpp
+index 61de2be2e8f6b7114a6fb92f6e7b07b130f8fc25..924d3490150e68d9878137875af03bf4ee228477 100644
+--- a/ReactCommon/yoga/yoga/algorithm/PixelGrid.cpp
++++ b/ReactCommon/yoga/yoga/algorithm/PixelGrid.cpp
+@@ -106,8 +106,22 @@ void roundLayoutResultsToPixelGrid(
+     const bool hasFractionalHeight =
+         !yoga::inexactEquals(round(scaledNodeHeight), scaledNodeHeight);
+ 
++    // [Ardia: on a fractional pixel grid (an interface size other than 100%) a thin node, a hairline or a 1 to 2 point
++    // rule, keeps one whole-pixel size wherever it sits and never rounds to nothing
++    const bool fractionalGrid =
++        !yoga::inexactEquals(round(pointScaleFactor), pointScaleFactor);
++    const double thinPixels = 3.0;
++    const bool thinWidth = fractionalGrid && !textRounding &&
++        scaledNodeWith > 0.01 && scaledNodeWith < thinPixels;
++    const bool thinHeight = fractionalGrid && !textRounding &&
++        scaledNodeHeight > 0.01 && scaledNodeHeight < thinPixels;
++    // Ardia]
++
+     node->getLayout().setDimension(
+         Dimension::Width,
++        thinWidth // [Ardia]
++            ? (float)(std::max(1.0, round(scaledNodeWith)) / pointScaleFactor)
++            :
+         roundValueToPixelGrid(
+             absoluteNodeRight,
+             pointScaleFactor,
+@@ -118,6 +132,9 @@ void roundLayoutResultsToPixelGrid(
+ 
+     node->getLayout().setDimension(
+         Dimension::Height,
++        thinHeight // [Ardia]
++            ? (float)(std::max(1.0, round(scaledNodeHeight)) / pointScaleFactor)
++            :
+         roundValueToPixelGrid(
+             absoluteNodeBottom,
+             pointScaleFactor,

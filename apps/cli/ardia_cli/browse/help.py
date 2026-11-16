@@ -38,7 +38,7 @@ Core Commands:
   screenshot [sel] [path]    Screenshot [--full] [--annotate]
   pdf <path>                 Save as PDF
   snapshot                   Accessibility tree with refs [-i] [-c] [-d n] [-s sel] [-u] [--diff]
-  eval <js>                  Run JavaScript in the page [-b base64] [--stdin]
+  eval <js>                  Run JavaScript in the page [-b base64] [--stdin] [--timeout 2m]
   close [--all]              Close the tabs this session opened and end the session
 
 Selectors:   CSS, @e3, text=Save (text="Save" exact), role=button[name="Save"], li:has-text("Ana"), li >> nth=2 (third match; -1 last), main >> text=Save, li:text-is("Ana"), xpath=//a;
@@ -52,7 +52,7 @@ Find:        find role|text|label|placeholder|alt|title|testid|first|last|nth <v
 Mouse:       mouse move <x> <y> | down [btn] | up [btn] | wheel <dy> [dx]
 Settings:    set viewport <w> <h> [scale] | reset                 (this session's own hidden tab, off-screen)
              set device|geo|offline|headers|credentials|media    (gated)
-Network:     network requests [--filter --type --method --status --clear] | request <id>
+Network:     network requests [--reload --filter --type --method --status --clear] | request <id>
              network har start [--content text|all|none] | har stop [path]
              network route <url> [--abort|--body <json>] | unroute [url]  (gated)
 Storage:     storage local|session [get [key] | set <k> <v> | clear]
@@ -74,7 +74,7 @@ React:       react tree | inspect <id> | renders start|stop | suspense [--only-d
 Performance: vitals [url]
 Audit:       a11y [url] [--tags t1,t2] [--selector css]
 Init:        addinitscript <js> | removeinitscript <id>   (page main world, by request)
-Batch:       batch [--bail] ["cmd args" | '["cmd","arg"]' ...]  (or one command per stdin line; # comments)
+Batch:       batch [--bail] [--out <file>] ["cmd args" | '["cmd","arg"]' ...]  (or one command per stdin line; # comments)
 Script:      script [file.js] [--timeout 90s]   (JS on stdin: loops over pages with page.goto/click/text, read())
 Notes:       notes [get|set|append|list|rm] [site] [text|-]   (plain per-site notes, shown atop snapshot)
 Flows:       flow steps | save <name> [--param k=v] | run <name> [--param k=v] [--fields a,b] [--where f=v] [--limit n]
@@ -210,7 +210,7 @@ COMMANDS = {
                   "--if-changed saves nothing and says so when this view looks the same as at its last screenshot (under --threshold percent of pixels changed, 0.5 by default).\n"
                   "--annotate takes an interactive snapshot and draws the numbered labels onto the image (nothing is added\n"
                   "to the page). Without a path it saves under $TMPDIR/ardia-browse/screenshots.",
-    "eval": "ardia browse eval <js> | -b <base64> | --stdin [--out <file>]\n\nRuns in the page's main world (the one place, with init scripts and the React hook, that does).\n"
+    "eval": "ardia browse eval <js> | -b <base64> | --stdin [--timeout 2m] [--out <file>]\n\nWaits up to 60 s for the promise the code returns; --timeout gives it longer, up to 10m.\n\nRuns in the page's main world (the one place, with init scripts and the React hook, that does).\n"
             "--out <file> saves the whole value (JSON, or the text as is) and prints a short summary instead.",
     "get": "ardia browse get text|html|value|attr <name>|title|url|count|box|styles <sel>\n\ncdp-url works only with --port or --ws: the real URL carries Ardia's token.",
     "find": "ardia browse find <role|text|label|placeholder|alt|title|testid|first|last|nth> <value> [action] [text] [--name n] [--exact|--partial]\n\n"
@@ -235,7 +235,8 @@ COMMANDS = {
     "console": "ardia browse console [--clear]\n\nThe first call turns on the Runtime domain for the session's tab (Chrome then replays earlier\n"
                "messages); until then ardia browse leaves Runtime off, unlike agent-browser.",
     "errors": "ardia browse errors [--clear]\n\nUncaught exceptions; turns Runtime on like console.",
-    "network": "ardia browse network requests [--filter p] [--type t] [--method m] [--status 2xx] [--clear] | request <id>\n"
+    "network": "ardia browse network requests [--reload] [--filter p] [--type t] [--method m] [--status 2xx] [--clear] | request <id>\n"
+               "  --reload starts recording and reloads the page, so its own loads are listed (--type xhr,fetch: its data calls)\n"
                "  | har start [--content text|all|none] | har stop [path] | route <url> [--abort|--body json] | unroute [url]\n\n"
                "route needs Fetch.enable, which Ardia's policy doesn't allow yet. On the real connection Ardia strips\n"
                "Cookie, Set-Cookie and Authorization headers from what the command sees.",
@@ -245,7 +246,7 @@ COMMANDS = {
             "Passwords live in the macOS login Keychain (via /usr/bin/security, written on its stdin, never argv).\n"
             "--password is refused. login checks the page's committed origin and frame against the saved https\n"
             "origins before typing and stops if the page navigates, the frame changes or focus leaves the field.",
-    "batch": "ardia browse batch [--bail] [\"cmd args\" | '[\"cmd\",\"arg\"]' ...]\n\nRuns commands in order in one call; without arguments, one command per stdin line (a heredoc\n"
+    "batch": "ardia browse batch [--bail] [--out <file>] [\"cmd args\" | '[\"cmd\",\"arg\"]' ...]\n\n--out <file> saves everything the batch prints and shows which lines failed.\nRuns commands in order in one call; without arguments, one command per stdin line (a heredoc\n"
              "works; blank lines and # lines are skipped). Lines use shell quoting or a JSON array. Each answer,\n"
              "with its changes, is printed in order. --bail stops at the first failure. A line takes its command's\n"
              "own flags and per-command ones like --full, --no-changes or --humanize. `close` as the last line ends the\n"
@@ -257,19 +258,22 @@ COMMANDS = {
     "flow": "ardia browse flow steps [--all]\n"
             "ardia browse flow save <name> [--from n] [--to n] [--param k=v]... [--output s2r1] [--description text]\n"
             "ardia browse flow run <name> [--param k=v]... [--fields a,b.c] [--where field=value]... [--limit n]\n"
-            "  [--allow-write all|w1,w2] [--tier page|replay] [--site s] [--timeout 60s]\n"
+            "  [--site s] [--timeout 60s]\n"
             "ardia browse flow list [site] | show <name> [--site s] | rm <name> [--site s]\n\n"
-            "The session keeps its last 200 actions with the first-party JSON each one loaded (and JSON a page embeds:\n"
+            "The session keeps its last 200 actions with the first-party JSON each GET loaded (and JSON a page embeds:\n"
             "__NEXT_DATA__, JSON-LD, window.x = {...}). save turns the steps since the last save (from the last open) into\n"
-            "a flow for the site, in <data dir>/Flows/<site>/<name>.json (0600): typed text and query values the requests\n"
-            "sent become params, and no cookie, auth or token header, secret field or credential query value is kept.\n"
-            "run fetches the answer from a background tab on the site (your logins stay in Ardia), then falls back to\n"
-            "replaying the commands; it checks the answer still has the recorded shape and prints the main list as\n"
-            "items. --where keeps items whose field contains the value; unknown fields fail with the valid ones.\n"
-            "Writes (POST, PUT, DELETE, a GET to /logout) are sent only with --allow-write. Codes: auth_expired, blocked,\n"
-            "rate_limited, drifted, outcome_unknown, write_not_allowed. open and snapshot list a site's flows once.",
+            "a read-only flow for the site, in <data dir>/Flows/<site>/<name>.json (0600): GET requests only, no bodies,\n"
+            "typed text and query values become params, and a URL keeps only params, numbers and short words.\n"
+            "run opens the flow's start page like open (or uses a tab already there) and sends the GET from it, with your\n"
+            "logins; it never replays clicks or typing. It checks the answer still has the recorded shape and prints the\n"
+            "main list as items. --where keeps items whose field contains the value; unknown fields fail with the valid\n"
+            "ones. Codes: redirected, auth_expired, blocked, rate_limited, drifted, fetch_failed, flow_not_get; then drive\n"
+            "the page yourself. open and snapshot list a site's flows once.",
     "read": "ardia browse read [url...] [--links <pattern>] [-s <selector>] [--stdin] [--limit n] [--timeout ms] [--http] [--list] [--out <file>]\n"
-            "ardia browse read [-s <list>] --scroll [--limit rows] [--match <text>] [--timeout ms]\n\n"
+            "ardia browse read [-s <list>] --scroll [--limit rows] [--match <text>] [--timeout ms]\n"
+            "ardia browse read --data [--block n|id] [--fields a,b.c] [--where field=value] [--limit n]\n\n"
+            "--data lists the JSON this tab's page embeds (__NEXT_DATA__, JSON-LD, application/json scripts, window.x = {...})\n"
+            "with each block's main list and fields; --fields/--where/--limit return just those items from the largest block (or --block).\n\n"
             "Reads each page in a background tab of this session's own (four at a time, through your logins, after its\n"
             "scripts ran) and prints its title, URL and text: the page's <main>, else its body, or what -s matches.\n"
             "Tables and ARIA grids print one row per line, cells split by ` | `, with a note when a grid renders only\n"

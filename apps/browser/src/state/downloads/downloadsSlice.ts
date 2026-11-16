@@ -36,6 +36,17 @@ const sessionOpen = (s: Pick<BrowserState, "windows" | "profiles">, session: str
   Object.values(s.windows).some((w) => w.kind === "private" && privateSession(s, w.profileId) === session);
 const endedPrivateDownloads = new Set<string>();
 
+export function withoutRepeats<Row extends Pick<Download, "url" | "path" | "profile" | "startTime">>(downloads: readonly Row[]): Row[] {
+  const seen = new Set<string>();
+  return downloads.filter((d) => {
+    if (!d.path || d.startTime === undefined) return true;
+    const key = `${d.profile ?? ""}\n${d.url}\n${d.path}\n${d.startTime}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export const downloadsIn = (s: Pick<BrowserState, "downloads" | "windows" | "profiles">, windowId: string) =>
   s.downloads.filter((d) => downloadVisibleIn(s, d, s.windows[windowId]));
 
@@ -59,8 +70,8 @@ export const createDownloadsSlice: StateCreator<BrowserState, [], [], DownloadsS
       const downloads = listed ? s.downloads.map((x) => (x.id === d.id ? record : x)) : [record, ...s.downloads].slice(0, MAX_DOWNLOADS);
       const focused = focusedWindowOf(s);
       const newlyHeld = awaitsKeep(d) && !s.downloads.some((x) => x.id === d.id && awaitsKeep(x));
-      const open = newlyHeld && focused && downloadVisibleIn(s, d, s.windows[focused]) && !s.windowUi[focused]?.downloadsOpen;
-      if (open) noteDownloadsPanel("heldOpen");
+      const open = (!listed || newlyHeld) && focused && downloadVisibleIn(s, d, s.windows[focused]) && !s.windowUi[focused]?.downloadsOpen;
+      if (open && newlyHeld) noteDownloadsPanel("heldOpen");
       return { downloads, ...(open ? patchWindowUi(s, focused, { downloadsOpen: true }) : {}) };
     });
     if (d.state === "downloading" && get().downloads.some((x) => x.id === d.id && x.state === "downloading")) showDownloadProgress(d);

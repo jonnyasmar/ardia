@@ -1,5 +1,6 @@
 import type { View } from "react-native";
 import { create } from "zustand";
+import { snappedToDevicePixels } from "../settings/interfaceScale";
 
 export type Anchor = { x: number; y: number; width: number; height: number };
 export type Target = { kind: "tab" | "group" | "live" | "folder"; id: string };
@@ -36,7 +37,7 @@ export function watchSidebarResize(windowId: string, changed: (resizing: boolean
 }
 
 export function setLiveSidebarWidth(windowId: string, width: number | null) {
-  const shown = width === null ? undefined : Math.round(width * 2) / 2;
+  const shown = width === null ? undefined : snappedToDevicePixels(width);
   const { widths } = useSidebarResize.getState();
   if (widths[windowId] === shown) return;
   const { [windowId]: _, ...rest } = widths;

@@ -8,7 +8,7 @@ import { SidebarTextScope } from "./SidebarTextScope";
 import { ThemeScope } from "../window/ThemeScope";
 import { PageProfileContext, useSettings, useWindowId } from "../../state/browser/hooks";
 import { newTab } from "../../state/tabs/actions";
-import { useSavedSidebarWidth, useSidebarCells, useSidebarResizing, useSidebarWidthAs } from "../../state/sidebar/hooks";
+import { useSidebarCells, useSidebarResizing, useSidebarWidth, useSidebarWidthAs } from "../../state/sidebar/hooks";
 import { useSidebarField, useSidebarPart } from "../../state/sidebar/chrome";
 import { SIDEBAR_PLAYER_HEIGHT, SidebarPlayer, usePlayerMotion, useSidebarPlayerTab } from "../media/SidebarPlayer";
 import { usePageStyle } from "../../state/windows/profilePager";
@@ -48,7 +48,7 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
   const topGap = listTopGap(useSidebarField() === "top");
   const pinnedShown = useSidebarPart("pinned");
   const newTabShown = useSidebarPart("newTab");
-  const width = useSavedSidebarWidth();
+  const width = useSidebarWidth(windowId, false);
   const pageStyle = usePageStyle(windowId, slot, width);
   const sharedTiles = useSharedTilesStyle(windowId, slot, width, paging);
   const [lazy] = useState(() => switchOn("lazySidebarRows"));

@@ -1,5 +1,7 @@
 import { type SettingSection } from "./types";
 import type { SettingsPane } from "../../../state/settings/settingsWindows";
+import { keyText } from "../../../state/commands/keyText";
+import { PLATFORM_FEATURES } from "../../../lib/platformFeatures";
 
 export const toolRows = {
   shortcuts: [
@@ -8,8 +10,8 @@ export const toolRows = {
       rows: {
         undoReopensClosedTab: {
           advanced: true,
-          title: "⌘Z reopens closed tabs",
-          description: "Outside text fields, as in Arc; press it again for the tab closed before. In a text field ⌘Z still undoes typing.",
+          title: `${keyText("⌘Z")} reopens closed tabs`,
+          description: `Outside text fields, as in Arc; press it again for the tab closed before. In a text field ${keyText("⌘Z")} still undoes typing.`,
           keywords: ["undo", "undo close tab", "reopen", "restore tab", "arc", "cmd z"],
         },
         actions: { title: "Customize keyboard shortcuts", keywords: ["hotkeys", "keybindings", "remap", "menu shortcuts"] },
@@ -99,9 +101,15 @@ export const toolRows = {
         protectedVideo: {
           advanced: true,
           title: "Open streaming sites in WebKit",
-          description: "Netflix, Disney+, Max, Prime Video, Hulu, Apple TV+, Apple Music and other sites whose video is protected open in WebKit, which plays it. A website rule wins.",
+          description: "Netflix, Disney+, Max, Prime Video, Hulu, Apple TV+, Apple Music, Spotify and other sites whose video is protected open in WebKit, which plays it. A website rule wins.",
           shown: (s) => s.pageEngine !== "webkit",
-          keywords: ["drm", "netflix", "disney", "hbo", "max", "prime video", "hulu", "apple tv", "apple music", "fairplay", "widevine", "streaming", "tencent video", "v.qq.com"],
+          keywords: ["drm", "netflix", "disney", "hbo", "max", "prime video", "hulu", "spotify", "apple tv", "apple music", "fairplay", "widevine", "streaming", "tencent video", "v.qq.com"],
+        },
+        fairPlayInChromium: {
+          advanced: true,
+          title: "Play protected media in Chromium with FairPlay",
+          description: "Sites Ardia's FairPlay player supports, like Spotify, stay in Chromium, and a small Ardia helper plays their protected media with Apple's FairPlay. Off, they open in WebKit like the other streaming sites.",
+          keywords: ["fairplay", "spotify", "drm", "chromium", "helper", "protected", "music", "video", "streaming"],
         },
       },
     },
@@ -175,7 +183,7 @@ export const toolRows = {
           advanced: true,
           title: "Unload inactive profiles",
           description: "A profile no window has shown for this long is unloaded with its extensions once its tabs can sleep, and loads again when you open it. Tabs playing sound, holding a form you started or downloading keep it loaded. Its extensions and notifications stop until then.",
-          shown: (s) => s.memorySaver,
+          shown: (s) => PLATFORM_FEATURES.unloadsIdleProfiles && s.memorySaver,
           keywords: ["profiles", "unload", "idle", "inactive", "timeout", "memory", "ram", "extensions", "sleep", "performance"],
         },
       },

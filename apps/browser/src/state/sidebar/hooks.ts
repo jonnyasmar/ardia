@@ -14,6 +14,7 @@ import { folderIn } from "../pins/tileFolders";
 import { ownIcon } from "../pins/rowIcons";
 import { usePage } from "../tabs/pageState";
 import { usePeekOpenedFrom } from "../peek/hooks";
+import { useTabShared } from "../media/screenShare";
 import { useStoreWhile } from "../tabs/tabWatch";
 import { splitRowPanes } from "../splits/splits";
 import { downloadsIn } from "../downloads/downloadsSlice";
@@ -22,31 +23,30 @@ import { groupTabIds } from "./groupPanelRows";
 import { capture, type Capture } from "./listCapture";
 import { pinnedCollapsed, pinnedKept } from "./pinnedFold";
 import { useSidebarResize, type Hover } from "./sidebarUi";
+import { sidebarWidthIn, useShownSidebarWidthAs } from "./shownWidth";
 
 export function useSidebarWidthAs<T>(windowId: string, select: (width: number) => T, live = true): T {
-  const saved = useBrowser((s) => select(s.settings.sidebarWidth));
+  const shown = useShownSidebarWidthAs(windowId, select);
   const dragged = useSidebarResize((r) => (live && windowId in r.widths ? select(r.widths[windowId]!) : undefined));
-  return dragged === undefined ? saved : dragged;
+  return dragged === undefined ? shown : dragged;
 }
 
 export const useSidebarWidth = (windowId: string, live = true) => useSidebarWidthAs(windowId, (width) => width, live);
 
-export const useSavedSidebarWidth = () => useBrowser((s) => s.settings.sidebarWidth);
-
 export const useSidebarResizing = (windowId: string, watching = true) => useSidebarResize((r) => watching && windowId in r.widths);
 
 export function useSidebarWidthValue(windowId: string): Animated.Value {
-  const saved = useSavedSidebarWidth();
-  const [value] = useState(() => new Animated.Value(saved));
+  const settled = useSidebarWidth(windowId, false);
+  const [value] = useState(() => new Animated.Value(settled));
   useLayoutEffect(() => {
     let shown = NaN;
     const follow = () => {
-      const width = useSidebarResize.getState().widths[windowId] ?? useBrowser.getState().settings.sidebarWidth;
+      const width = useSidebarResize.getState().widths[windowId] ?? sidebarWidthIn(useBrowser.getState(), windowId);
       if (width !== shown) value.setValue((shown = width));
     };
     follow();
     return useSidebarResize.subscribe(follow);
-  }, [value, windowId, saved]);
+  }, [value, windowId, settled]);
   return value;
 }
 
@@ -64,8 +64,9 @@ export const useIconPickerCurrent = (kind: "tab" | "group" | "live" | "folder", 
 
 export function useTabBadged(tabId: string): boolean {
   const capturing = usePage(tabId, (p) => !!p.mediaAccess);
+  const shared = useTabShared(tabId);
   const peeked = !!usePeekOpenedFrom(tabId);
-  return capturing || peeked;
+  return capturing || shared || peeked;
 }
 
 export const useIsPinnedRow = (kind: "tab" | "group" | "live" | "folder", id: string) => useBrowser((s) => kind === "tab" && isPinnedRow(s.tabs[id]));
@@ -91,14 +92,6 @@ export const useShowsExtraTabs = (windowId: string, profileId: string, groupId: 
 export const usePinnedCollapsed = (profileId: string) => useBrowser((s) => pinnedCollapsed(s, profileId));
 
 export const usePinnedKept = (windowId: string, profileId: string, entries: string[]) => useBrowser((s) => pinnedKept(s, windowId, profileId, entries));
-
-export const useGroupFirstTabIcon = (groupId: string) =>
-  useBrowser(
-    useShallow((s) => {
-      const t = s.tabs[s.groups[groupId]?.tabIds[0] ?? ""];
-      return t && { url: t.url, favicon: t.favicon, customIcon: t.customIcon, profileId: t.profileId };
-    }),
-  );
 
 export const useHasDownloads = (windowId: string) => useBrowser((s) => downloadsIn(s, windowId).length > 0);
 

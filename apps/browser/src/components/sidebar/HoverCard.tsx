@@ -11,6 +11,7 @@ import { useHoverOrphaned, useIsShownTab } from "../../state/sidebar/hooks";
 import { useFolderPanel } from "../../state/sidebar/tileFolderUi";
 import { awayTitle } from "../../state/pins/organize";
 import { openInSplit } from "../../state/splits/actions";
+import { splitViewAvailable } from "../../state/splits/splits";
 import { CalendarPreview, useIsCalendarTab } from "../live/CalendarPreview";
 import { LiveItemCard } from "../live/LiveItemCard";
 import { HoverCard as HoverPanel, space, Text } from "../ui";
@@ -27,7 +28,7 @@ import { hoverCardAt, sidebarEdgeOf } from "./hoverPlacement";
 import { usePeekSpan } from "../../state/windows/dockMotion";
 import { TabCardSummary } from "./TabCardSummary";
 import { useSidebarUi, type Anchor, type Hover } from "../../state/sidebar/sidebarUi";
-import { useSavedSidebarWidth } from "../../state/sidebar/hooks";
+import { useSidebarWidth } from "../../state/sidebar/hooks";
 import { TabIcon } from "./TabIcon";
 import { HoverPlayer, useShowsMiniPlayer } from "../media/HoverPlayer";
 import { useMedia, usePictureInPicture } from "../../state/media/media";
@@ -48,7 +49,7 @@ export function HoverCard({ windowId, width, height }: { windowId: string; width
   const shown = drawn ?? target;
   const player = useShowsMiniPlayer(shown?.kind === "tab" ? shown.id : undefined);
   const side = useSidebarSide(windowId);
-  const sidebarEdge = sidebarEdgeOf(side, width, useSavedSidebarWidth(), usePeekSpan(windowId));
+  const sidebarEdge = sidebarEdgeOf(side, width, useSidebarWidth(windowId, false), usePeekSpan(windowId));
   const frame = useMemo(() => ({ side, windowWidth: width, sidebarEdge }), [side, width, sidebarEdge]);
   useHoverCardPlacement(motion, shown ? hoverCardAt(shown.anchor, frame) : null, { width, height });
   if (!shown) return null;
@@ -106,7 +107,7 @@ function TabCard({ tabId, windowId, anchor }: { tabId: string; windowId: string;
             onPress={() => (noteTabHoverCardPress(false), toggleBookmarkInWindow(windowId, { url: tab.url, title: tabTitle(tab), favicon: tab.favicon }))}
           />
         ) : null}
-        {!isActive && !tab.pin ? (
+        {!isActive && !tab.pin && splitViewAvailable ? (
           <ActionTile caption
             icon="rectangle.split.2x1"
             label="Split"

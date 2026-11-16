@@ -20,6 +20,7 @@ public class ShellModule: Module {
       _ = installSubmenuAction
       _ = installInputSourceKeys
       _ = installScrollViewInsetFix
+      _ = installStripWheel
       _ = installOutsidePressMonitor
       _ = installWindowMoveFallback
       _ = installCenteredResize
@@ -42,6 +43,7 @@ public class ShellModule: Module {
           ShellEvents.send(.app, ["type": "appearance", "dark": ShellModule.isDark])
         }
         self.observeForSidebar()
+        LittleArdiaHandoff.shared.start()
         ArdiaHost.quitCancelledHandler = { ShellEvents.send(.app, ["type": "quitCancelled"]) }
         Self.quitCancelledOwner = ObjectIdentifier(self)
       }
