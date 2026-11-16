@@ -68,7 +68,7 @@ export const HOLDS: Record<Held, { chrome: Chrome | null; surfaces: Surface[] }>
   peek: { chrome: "sidebar", surfaces: ["menu", "rename", "iconPicker", "hoverCard", "resize", "downloads", "popover", "historyMenu"] },
   topStrip: { chrome: null, surfaces: ["menu", "downloads"] },
   toolbar: { chrome: "toolbar", surfaces: ["menu", "panel", "find", "popover", "historyMenu", "extensionPopup"] },
-  hover: { chrome: null, surfaces: ["menu", "rename", "iconPicker", "downloads", "popover", "panel", "find", "historyMenu", "extensionPopup"] },
+  hover: { chrome: null, surfaces: ["menu", "rename", "iconPicker", "resize", "downloads", "popover", "panel", "find", "historyMenu", "extensionPopup"] },
 };
 
 const noTab = () => false;
