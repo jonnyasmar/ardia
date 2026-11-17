@@ -159,9 +159,9 @@ export function Sidebar() {
                   </>
                 ) : collapsed ? null : (
                   <View pointerEvents="box-none" style={{ height: header, flexDirection: "row", alignItems: "flex-start", paddingLeft: PROFILE_INDICATOR_X, paddingRight: HEADER_RIGHT + captionRoom, paddingTop: lightsY - 17 }}>
-                    {profileShown ? <HeaderProfile windowId={windowId} hasDownloads={hasDownloads} captionRoom={captionRoom} /> : null}
+                    {profileShown ? <HeaderProfile windowId={windowId} besideDownloads={hasDownloads && !footerDownloads} captionRoom={captionRoom} /> : null}
                     <View pointerEvents="none" style={{ flex: 1 }} />
-                    {hasDownloads ? <DownloadsButton windowId={windowId} /> : null}
+                    {hasDownloads && !footerDownloads ? <DownloadsButton windowId={windowId} /> : null}
                   </View>
                 )}
               </View>
@@ -186,7 +186,7 @@ export function Sidebar() {
   );
 }
 
-function HeaderProfile({ windowId, hasDownloads, captionRoom }: { windowId: string; hasDownloads: boolean; captionRoom: number }) {
+function HeaderProfile({ windowId, besideDownloads, captionRoom }: { windowId: string; besideDownloads: boolean; captionRoom: number }) {
   const width = useSidebarWidth(windowId);
-  return <ProfileIndicator room={width - PROFILE_INDICATOR_X - HEADER_RIGHT - captionRoom - (hasDownloads ? SIDEBAR_FOOTER_DOWNLOADS.size + 2 : 0)} />;
+  return <ProfileIndicator room={width - PROFILE_INDICATOR_X - HEADER_RIGHT - captionRoom - (besideDownloads ? SIDEBAR_FOOTER_DOWNLOADS.size + 2 : 0)} />;
 }

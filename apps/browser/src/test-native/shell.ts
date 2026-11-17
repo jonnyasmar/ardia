@@ -31,6 +31,7 @@ const testGlobals = globalThis as { acTestUserScripts?: UserScriptsHost };
 
 export const docs = new Map<string, string>();
 export const heldSaves = { on: false, queue: [] as (() => void)[] };
+export const refusedWrites = { on: false, returnsFalse: false };
 export const bangListServer: { reply: ((etag: string | null) => Promise<BangListReply>) | null } = { reply: null };
 export const appInfo: Partial<SystemInfo> = { appVersion: "1.0" };
 export const interfaceScaleNative = { scale: 1, applied: [] as number[], refuses: false, asked: [] as number[] };
@@ -125,6 +126,14 @@ const windowsModule: Modules["ArdiaAppWindows"] & { requestClose(id: string): Pr
 };
 
 export const pressesWithoutRelease = { count: 0 };
+export const focusHandoffCounts = {
+  pending: {} as Record<string, number>,
+  take() {
+    const taken = this.pending;
+    this.pending = {};
+    return taken;
+  },
+};
 export const pressRepeated: { earlier: { landedOn: string; ms: number } | null } = { earlier: null };
 
 const focus: Modules["ArdiaFocus"] = {
@@ -133,10 +142,13 @@ const focus: Modules["ArdiaFocus"] = {
   saveKeyResponder: () => Promise.resolve(0),
   restoreKeyResponder: () => Promise.resolve(false),
   discardKeyResponder: () => Promise.resolve(),
+  takeEditKeyAcks: () => editKeyAcks.take(),
+  takeInputSourceKeys: () => inputSourceKeys.take(),
   switcherPointerMoved: () => true,
   cancelFocusMove: () => Promise.resolve(),
   claimFocus: () => Promise.resolve(),
   pressesWithoutRelease: () => pressesWithoutRelease.count,
+  takeFocusHandoffCounts: () => focusHandoffCounts.take(),
   pressRepeated: () => Promise.resolve(pressRepeated.earlier),
 };
 
@@ -160,14 +172,18 @@ const dialogs: Modules["ArdiaDialogs"] = {
 
 const documents: Modules["ArdiaDocuments"] = {
   readDocument: (name) => docs.get(name) ?? null,
-  writeDocument: (name, contents) => void docs.set(name, contents),
+  writeDocument: (name, contents) => {
+    if (refusedWrites.on) throw new Error("write refused");
+    if (refusedWrites.returnsFalse) return false as unknown as void;
+    docs.set(name, contents);
+  },
   saveDocument: (name, contents) =>
     new Promise((resolve) => {
       const land = () => (docs.set(name, contents), resolve());
       if (heldSaves.on) heldSaves.queue.push(land);
       else land();
     }),
-  documentSaved: () => Promise.resolve(),
+  documentSaved: () => (refusedWrites.on ? Promise.reject(new Error("save refused")) : Promise.resolve()),
   removeDocument: (name) => void docs.delete(name),
 };
 
@@ -214,7 +230,7 @@ const notifications: Modules["ArdiaNotifications"] = {
   addListener: notificationEvents.addListener,
   notificationPermission: () => Promise.resolve("notDetermined"),
   requestNotificationPermission: () => Promise.resolve(false),
-  postNotification: () => Promise.resolve(null),
+  postNotification: (options) => Promise.resolve({ id: options.id, icon: "none" }),
   removeNotifications: () => Promise.resolve(),
   openNotificationSettings: () => Promise.resolve(),
 };
@@ -420,7 +436,7 @@ export const shellNativeModules: Modules = {
   ArdiaKeychain: keychain,
   ArdiaGlassEffect: { isLiquidGlass: () => false },
   ArdiaDockSelection: { iconTheme: () => Promise.resolve(null), iconAccent: () => Promise.resolve(null) },
-  ArdiaInlineCompletion: { complete: () => Promise.resolve(0) },
+  ArdiaInlineCompletion: { complete: () => Promise.resolve(0), copyFieldAs: () => Promise.resolve() },
   ArdiaTranslate: translate,
   ArdiaMagnifyArea: magnifyArea,
   ArdiaFileDrop: fileDrop,
@@ -431,4 +447,22 @@ export const shellNativeModules: Modules = {
   ArdiaSystemSignals: systemSignalsModule,
   ArdiaTelemetryLocal: telemetryLocalModule,
   ArdiaReport: reportModule,
+};
+
+export const inputSourceKeys = {
+  pending: 0,
+  take() {
+    const taken = this.pending;
+    this.pending = 0;
+    return taken;
+  },
+};
+
+export const editKeyAcks = {
+  pending: {} as Record<string, number>,
+  take() {
+    const taken = this.pending;
+    this.pending = {};
+    return taken;
+  },
 };

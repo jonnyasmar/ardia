@@ -1,7 +1,6 @@
 #import "ArdiaWebViewInternal.h"
 #import "ArdiaRuntime.h"
 #import "ArdiaEarlyWindow.h"
-#import "ArdiaFairPlay.h"
 #import "ArdiaFieldTiming.h"
 #import "ArdiaHost.h"
 #import "ArdiaPictureInPicture.h"
@@ -57,10 +56,6 @@ static NSString *DisplayMediaAudioFor(NSDictionary *offer, NSString *sourceId) {
 
 namespace ardia_web_view {
 
-static NSString *FairPlayConfig() {
-  return JSONText(@{@"event" : @"config", @"on" : @(ArdiaFairPlay.enabled && ArdiaFairPlay.available)});
-}
-
 void AnswerHello(ArdiaCoreTab *tab, NSString *profile, NSString *frameId, BOOL main, NSString *verifiedOrigin) {
   NSString *origin = (main ? VerifiedOrigin(verifiedOrigin) : nil) ?: OriginOf(tab.url);
   __weak ArdiaCoreTab *weakTab = tab;
@@ -79,8 +74,6 @@ void AnswerHello(ArdiaCoreTab *tab, NSString *profile, NSString *frameId, BOOL m
     if (TracingPictureInPicture()) config[@"pipTrace"] = @YES;
     [to callFrame:frameId kind:@"config" json:JSONText(config)];
   };
-  if (main && frameId.length && [ArdiaFairPlay servesOrigin:VerifiedOrigin(verifiedOrigin)])
-    [tab callFrame:frameId kind:@"fairPlay" json:FairPlayConfig()];
   if (origin && [origin hasPrefix:@"http"])
     [ArdiaServices siteSettings:profile ?: @"" origin:origin reply:^(NSDictionary *settings, NSString *) {
       NSDictionary *autoplay = [settings[@"autoplay"] isKindOfClass:NSDictionary.class] ? settings[@"autoplay"] : nil;
@@ -112,12 +105,6 @@ NSMutableOrderedSet<NSString *> *ScriptFramesOf(ArdiaCoreTab *tab) {
   gBlockAutoplayEverywhere = enabled;
 }
 
-+ (void)setFairPlayInChromium:(BOOL)enabled {
-  if (enabled == ArdiaFairPlay.enabled) return;
-  ArdiaFairPlay.enabled = enabled;
-  for (ArdiaWebView *view in LiveViews().allObjects) [view pushFairPlay];
-}
-
 + (void)setSelectionPopoverEnabled:(BOOL)enabled {
   if (enabled == gSelectionPopover) return;
   gSelectionPopover = enabled;
@@ -141,12 +128,14 @@ NSMutableOrderedSet<NSString *> *ScriptFramesOf(ArdiaCoreTab *tab) {
     [self noteScriptFrame:frameId main:main];
     [self callFrame:frameId kind:@"peekConfig" json:PeekConfigJSON(self)];
     AnswerHello(tab, _profile, frameId, main, verifiedOrigin);
-    if (main && _littlePage.held) [self callFrame:frameId kind:@"firstPaint" json:@"{}"];
+    if (main) _firstPaint.scripted = YES;
+    if (main && _firstPaint.held) [self callFrame:frameId kind:@"firstPaint" json:@"{}"];
   } else if ([kind isEqualToString:@"displayMediaHello"]) {
     [self callFrame:frameId kind:@"config" json:gDisplayMediaPicker ? @"{\"displayMediaPicker\":true}" : @"{}"];
   } else if ([kind isEqualToString:@"firstPaint"] && main) {
     NSString *url = Text(dict, @"url", 8192);
-    if (url.length && ![url hasPrefix:@"about:"] && SamePage(url, tab.url)) [self revealLittlePage:YES];
+    if (url.length && ![url hasPrefix:@"about:"] && SamePage(url, tab.url))
+      [self showHeldPage:Flag(dict, @"loaded") ? ArdiaHeldPageEnd::Loaded : ArdiaHeldPageEnd::Painted];
   } else if ([kind isEqualToString:@"peek"] && dict) {
     [self peekLink:dict frame:frameId main:main];
   } else if ([kind isEqualToString:@"peekHello"]) {
@@ -193,8 +182,6 @@ NSMutableOrderedSet<NSString *> *ScriptFramesOf(ArdiaCoreTab *tab) {
       [self emit:@"scroll" payload:@{@"state" : state}];
   } else if ([kind isEqualToString:@"drm"] && dict) {
     [self emit:@"protectedMedia" payload:@{@"keySystem" : Text(dict, @"keySystem", 64) ?: @"", @"main" : @(main)}];
-  } else if ([kind isEqualToString:@"fairPlay"] && main && dict && [ArdiaFairPlay servesOrigin:VerifiedOrigin(verifiedOrigin)]) {
-    [ArdiaFairPlay tab:tab frame:frameId message:dict];
   } else if ([kind isEqualToString:@"nowPlaying"]) {
     if (!_reports.nowPlaying) _reports.nowPlaying = [ArdiaNowPlaying new];
     NSDictionary *state = [_reports.nowPlaying noteFrame:frameId page:dict main:main];
@@ -289,10 +276,6 @@ NSMutableOrderedSet<NSString *> *ScriptFramesOf(ArdiaCoreTab *tab) {
   if (frameId.length) [ScriptFramesOf(_tab) removeObject:frameId];
 }
 
-- (void)pushFairPlay {
-  if (_tab && [ArdiaFairPlay servesOrigin:OriginOf(_tab.url)]) [_tab callPage:@"fairPlay" json:FairPlayConfig()];
-}
-
 - (void)pushSelectionPopover {
   if (_tab) [self callFrame:@"" kind:@"selectionPopover" json:gSelectionPopover ? @"true" : @"false"];
 }
@@ -303,7 +286,6 @@ NSMutableOrderedSet<NSString *> *ScriptFramesOf(ArdiaCoreTab *tab) {
 }
 
 - (void)resetPageMedia {
-  [ArdiaFairPlay pageGoneFromTab:_tab];
   if ([_reports.nowPlaying reset]) [self emit:@"nowPlaying" payload:@{@"state" : NSNull.null}];
   [self autoPictureInPictureInputsChanged];
 }

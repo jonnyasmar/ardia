@@ -10,7 +10,7 @@ import { usePictureInPicture } from "../../state/media/media";
 import { HoverSlot } from "../ui/HoverSlot";
 import { ActivitySpinner, Button, Divider, FadeLabel, ink, OutsidePressArea, radius, sidebarFont, sidebarLineHeight, space, Symbol, typeFace, useHover, withAlpha } from "../ui";
 import { isPinnedRow, tabTitle } from "../../state/browser/model";
-import { awayFromPin, awayTitle } from "../../state/pins/organize";
+import { awayFromPin, rowAwayTitle } from "../../state/pins/organize";
 import { hidesRowIcon } from "../../state/pins/rowIcons";
 import { commitRename, endRename, startRename } from "../../state/sidebar/actions";
 import { useDragItem, useDropOnto } from "./DragProvider";
@@ -91,7 +91,7 @@ export const TabRow = memo(function TabRow({
   if (!tab) return null;
   const resetting = resettable && backToPin.hovered && !renaming;
   const title = resetting ? "Back to Pinned URL" : tab.customTitle ? tabTitle(tab) : titleWithoutUnread(tabTitle(tab), unread);
-  const away = resettable && !resetting ? awayTitle(tab) : null;
+  const away = resettable && !resetting ? rowAwayTitle(tab) : null;
   const textOnly = hidesRowIcon(tab, badged);
   const fill = quiet
     ? active ? tokens.quietWash : selected ? tokens.multiSelected : hovered ? tokens.quietHover : ink.clear
@@ -108,7 +108,7 @@ export const TabRow = memo(function TabRow({
       style={moved.style as object}
       onDoubleClick={() => void startRename(windowId, { kind: "tab", id: tabId })}
     >
-      <TabPressArea windowId={windowId} tab={tab}>
+      <TabPressArea windowId={windowId} tab={tab} hitSlop={rowGapSlop(0)}>
       {({ pressed }) => (
           <SidebarRowSurface
             fill={onto || (!active && pressed) ? pressedFill : fill}
@@ -298,6 +298,12 @@ export const SplitRowItem = memo(function SplitRowItem({
 });
 
 const SPLIT_DIVIDER_LENGTH = 16;
+const SPLIT_PANE_INSET = 3;
+
+function rowGapSlop(inset: number) {
+  const reach = inset + layout.rowGap / 2;
+  return { top: reach, bottom: reach };
+}
 const SPLIT_SLOT = { flex: 1, flexDirection: "row", alignItems: "center", minWidth: 0, gap: space.xxs } as const;
 
 function SplitPane({ tabId, windowId }: { tabId: string; windowId: string }) {
@@ -310,11 +316,11 @@ function SplitPane({ tabId, windowId }: { tabId: string; windowId: string }) {
   if (!tab) return null;
   return (
     <View {...hoverProps} style={{ flex: 1, minWidth: 0 }}>
-      <TabPressArea windowId={windowId} tab={tab}>
+      <TabPressArea windowId={windowId} tab={tab} hitSlop={rowGapSlop(SPLIT_PANE_INSET)}>
         {({ pressed }) => (
           <View
             style={{
-              height: layout.rowHeight - 6,
+              height: layout.rowHeight - SPLIT_PANE_INSET * 2,
               borderRadius: radius.tile,
               flexDirection: "row",
               alignItems: "center",

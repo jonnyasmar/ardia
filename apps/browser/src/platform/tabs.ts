@@ -23,8 +23,8 @@ export {
   type WebNotification,
   type PageSelection,
   type ScrollState,
+  type FocusRestoreOutcome,
   type ProtectedMediaRequest,
-  type FairPlayReport,
   type AppBadge,
 } from "@ardia/ardiacore";
 

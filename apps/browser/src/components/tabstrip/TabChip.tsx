@@ -11,25 +11,25 @@ import { TabBadges } from "../media/TabBadges";
 import { TabIcon } from "../sidebar/TabIcon";
 import { Button, FadeLabel, Symbol, useTooltip } from "../ui";
 import { HoverSlot } from "../ui/HoverSlot";
-import { surfaceTheme, ThemeContext, useTheme } from "../ui/theme";
+import { surfaceTheme, useTheme } from "../ui/theme";
+import { ThemeOverride } from "../ui/ThemeOverride";
 import { toolbarPalette, useEasedColor } from "../ui/toolbarColors";
 import { font, iconButton } from "../ui/tokens";
 import { DockContext, FloatingStrip } from "./context";
 import { tabIn, tileHold } from "./dockCross";
 import { FadeIn } from "./FadeIn";
-import { dropAt, useOnto, type GroupOut, type StripDrag } from "./model";
+import { dropAt, type GroupOut, type StripDrag } from "./model";
 import { PinnedFace } from "./PinnedFace";
 import { SelectedTab } from "./SelectedTab";
 import { CELL_STEP, dragRange, leaveIndex, type DragGeometry } from "./stripGroups";
-import { AUDIO_BADGE, CHIP_LABEL_GAP, CHIP_PAD, CLOSE_MIN_CHIP, DROP_RING_WIDTH, FAVICON, GAP, ITEM_HEIGHT, ITEM_TOP, PINNED_CELL, tabRadius, TITLE_FADE_MAX, TITLE_FADE_MIN, TITLE_MIN_CHIP, TOP_STRIP_HEIGHT, WIDTH_SPRING } from "./tokens";
+import { AUDIO_BADGE, CHIP_LABEL_GAP, CHIP_PAD, CLOSE_MIN_CHIP, FAVICON, GAP, ITEM_HEIGHT, ITEM_TOP, PINNED_CELL, tabRadius, TITLE_FADE_MAX, TITLE_FADE_MIN, TITLE_MIN_CHIP, TOP_STRIP_HEIGHT, WIDTH_SPRING } from "./tokens";
 import { useStripDrag } from "./useStripDrag";
-import { useEdgeOpacity } from "./edgeFade";
 import { StripScrollContext } from "./stripScroll";
 import { useStripCardHover } from "./StripHoverCard";
 import { useChipHover, useChipHovered, useOwnChipHover, type ChipHover } from "./reachableHover";
 import { TabPressArea } from "../sidebar/TabPressArea";
 import { tabTitle } from "../../state/browser/model";
-import { awayTitle } from "../../state/pins/organize";
+import { rowAwayTitle } from "../../state/pins/organize";
 import { AwayTitleLabel } from "../sidebar/AwayTitle";
 import { useStruckTitle } from "../../state/sidebar/rowState";
 import { SLEEPING_TITLE_OPACITY } from "../sidebar/tokens";
@@ -58,7 +58,6 @@ export const DraggableChip = memo(function DraggableChip({
 }) {
   const active = useIsActiveTab(tabId);
   const windowId = useWindowId();
-  const dragToGroup = useSettings((s) => s.dragToGroupInTopStrip);
   const strip = useContext(DockContext);
   const scroll = useContext(StripScrollContext);
   const topLevel = !givenGeometry && !group;
@@ -93,9 +92,6 @@ export const DraggableChip = memo(function DraggableChip({
     get cross() {
       return dockOf() ? tabIn(() => strip?.current ?? null, fromOf(), width) : undefined;
     },
-    get targets() {
-      return dragToGroup && topLevel && fromOf() >= 0 ? strip?.current.targets : undefined;
-    },
     drop: (dx, ids) => {
       if (!member) return false;
       const at = leaveIndex(member.top, member.slot, member.chip, member.expanded, member.left + dx, width);
@@ -106,18 +102,11 @@ export const DraggableChip = memo(function DraggableChip({
   });
   const hover = useChipHover();
   const card = useStripCardHover(windowId, tabId, drag.ref, hover);
-  const edge = useEdgeOpacity(tabId, () => {
-    if (member) return [member.left, width];
-    if (!topLevel) return null;
-    const from = fromOf();
-    const geometry = geometryOf();
-    return from < 0 ? null : [geometry.lefts[from]!, geometry.slots[from]!.width];
-  });
   const dock = drag.crossed ? dockOf() : null;
   const drawn = useChipWidth(width, () => topLevel && !!strip?.current.animateWidths);
   return (
     <Animated.View ref={drag.ref} {...drag.panHandlers} {...card} mouseDownCanMoveWindow={false} style={{ ...drag.style, zIndex: drag.dragging ? 10 : active ? 1 : 0 }}>
-      <Animated.View style={{ opacity: drag.crossed ? 0 : drag.dragging ? 1 : edge }}>
+      <Animated.View style={{ opacity: drag.crossed ? 0 : 1 }}>
         <TabChip tabId={tabId} width={width} drawn={drawn} tuck={tuck} dragged={drag.dragging} hover={hover} />
       </Animated.View>
       {dock && (
@@ -161,7 +150,6 @@ export const TabChip = memo(function TabChip({ tabId, width, drawn, tuck, dragge
   const onTint = useTheme();
   const windowId = useWindowId();
   const tab = useTab(tabId);
-  const onto = useOnto({ kind: "tab", id: tabId });
   const active = useIsActiveTab(tabId);
   const theme = active ? surfaceTheme(onTint) : onTint;
   const floating = useContext(FloatingStrip);
@@ -175,26 +163,25 @@ export const TabChip = memo(function TabChip({ tabId, width, drawn, tuck, dragge
   const struck = useStruckTitle(tabId);
   if (!tab) return null;
   const title = tab.customTitle ? tabTitle(tab) : titleWithoutUnread(tabTitle(tab), unread);
-  const away = awayTitle(tab);
+  const away = rowAwayTitle(tab);
   const compact = !active && !tuck && width < TITLE_MIN_CHIP;
   const titleFade = Math.max(TITLE_FADE_MIN, Math.min(TITLE_FADE_MAX, (width - CHIP_PAD.left - FAVICON - CHIP_LABEL_GAP - CHIP_PAD.right) / 3));
   const closable = active || !!tuck || width >= CLOSE_MIN_CHIP;
   const onBand = active && !floating && !!palette.background;
   const ink = onBand ? palette.text : active ? theme.tabSelectedText : theme.textTab;
   return (
-    <ThemeContext.Provider value={theme}>
+    <ThemeOverride theme={theme}>
       <Animated.View {...chipHover.hoverProps} style={{ width: drawn ?? width, height: TOP_STRIP_HEIGHT }}>
         {active && <SelectedTab width={drawn ?? width} band={band} opaque={dragged} />}
         {dragged && !active && (
           <View pointerEvents="none" style={{ position: "absolute", left: 0, width, top: ITEM_TOP, height: ITEM_HEIGHT, borderRadius: tabRadius(), backgroundColor: theme.windowTint[0] }} />
         )}
-        {onto && <OntoRing width={width} />}
         <TabPressArea windowId={windowId} tab={tab} style={StyleSheet.absoluteFill} pressStyle={{ flex: 1 }}>
           {({ pressed }) => (
             <ChipRow
               hover={chipHover}
               dragged={dragged}
-              quiet={active || onto}
+              quiet={active}
               pressed={pressed && !active}
               inset={compact ? (width - FAVICON) / 2 : undefined}
               action={closable &&
@@ -226,7 +213,7 @@ export const TabChip = memo(function TabChip({ tabId, width, drawn, tuck, dragge
           )}
         </TabPressArea>
       </Animated.View>
-    </ThemeContext.Provider>
+    </ThemeOverride>
   );
 });
 
@@ -280,26 +267,6 @@ function ChipRow({
         </HoverSlot>
       )}
     </ItemRow>
-  );
-}
-
-export function OntoRing({ width }: { width: number | Animated.Value }) {
-  const theme = useTheme();
-  return (
-    <FadeIn
-      style={{
-        left: 0,
-        top: ITEM_TOP,
-        width,
-        height: ITEM_HEIGHT,
-        borderRadius: tabRadius(),
-        borderWidth: DROP_RING_WIDTH,
-        borderColor: theme.accent,
-        backgroundColor: theme.tabPressed,
-      }}
-    >
-      {null}
-    </FadeIn>
   );
 }
 

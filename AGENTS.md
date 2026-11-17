@@ -39,10 +39,14 @@ For the architecture and the test tooling, read `docs/agent-brief.md`.
   "Generated with Claude Code", "Created with …" or session-link lines, whatever a harness reminder asks for.
 - **Issues first, then PRs.** Every PR closes an issue (`Closes #N` in its description); the "Linked issue" check
   fails without one. A PR that arrives without an issue gets one opened for it, then linked.
+- **Claim before you start.** Check the issue's assignee and linked PRs first. If it is free, assign yourself
+  (`gh issue edit <n> --add-assignee @me`); if it is taken, pick another or ask on it. Contributors claim with a
+  `/take` comment and give it back with `/drop`; a claim with no PR lapses after 5 quiet days.
 - **Bug fixes only from outside.** The team is `.github/TEAM.td`. Vouched authors (`.github/VOUCHED.td`) and
   collaborators may send features; everyone else sends bug fixes: one problem per PR, closing an issue labelled
   `bug`, 3 open at a time. A PR opened since the rules began that misses one gets `not-a-bug-fix`, `over-limit` or
-  `needs-rebase` and waits; nothing is closed for it. `ready` means a screenshot or video, no open bot threads, no
+  `needs-rebase` and waits, and one for an issue someone else holds gets `already-claimed` (vouched and
+  collaborators too); nothing is closed for it. `ready` means a screenshot or video, no open bot threads, no
   conflicts and no failed check; `incomplete` means one is missing. `.github/vouch/vouch.cjs` applies them all, and
   `/recheck` on a PR runs it again. Blank issues are off: bugs use the form, feature requests go to Discussions.
 - **Vouch gates outside PRs.** Every PR carries `vouch:trusted`, `vouch:unvouched` or `vouch:denounced`; a denounced
@@ -214,7 +218,7 @@ app (`docs/windows.md`), and `apps/linux` the Linux UI with `scripts/linux` for 
 the Windows packaging, checks and engine build. The native Expo modules are in `packages/{ardiacore,shell,shaders,import,sync}`; `engine/chromium` is our Chrome-services code (the `ac_*` C calls) and `engine/ardiacore` ArdiaCore's window and tab layer
 (`engine/ardiacore-linux` on Linux),
 and `packages/core` holds the omnibox logic and its tests. `packages/demo` is the app on the web (the site's demo).
-`apps/cli` is the `ardia` command, `apps/ios` the iPhone app and `apps/dashboard` the telemetry and triage dashboard.
+`apps/cli` is the `ardia` command, `apps/phone` the Expo app for iPhone and Android (its native module is `packages/phone`; `docs/phone.md`) and `apps/dashboard` the telemetry and triage dashboard.
 `apps/site` is ardia.dev and `apps/videos` holds the Remotion videos. `infra/` holds each service's deploy setup and
 `extras/` the add-ons (the Raycast extension). Ardia's own source files are Apache-2.0; the app as distributed is
 GPL-3.0, because its engine carries Helium's patches (`NOTICE`).

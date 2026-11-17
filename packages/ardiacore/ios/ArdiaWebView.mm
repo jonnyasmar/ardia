@@ -209,6 +209,11 @@ void AcceptDrops(NSView *root, BOOL accept) {
   else [self ensureTab];
 }
 
+- (void)viewDidUnhide {
+  [super viewDidUnhide];
+  [self settleFirstShowFocus];
+}
+
 - (void)setExtensionHost:(NSString *)extensionHost {
   _extensionHost = [extensionHost copy];
   if (_extensionHost.length) _standalone = YES;
@@ -251,8 +256,10 @@ void AcceptDrops(NSView *root, BOOL accept) {
   if (!visible) [self storePageFocus];
   _visible = visible;
   if (visible) [self exposePage];
+  if (visible) [self holdCreatedPageShown];
   if (visible) [self stopHolding];
   if (visible) [self settleRevealsInWindow];
+  if (visible) [self settleFirstShowFocus];
   if (!visible) [_tab exitExclusiveAccess];
   if (visible && !_frameHold.awaiting && self.alphaValue < 1 && _tab.view.superview == self && !_tab.view.hidden) {
     [CATransaction begin];

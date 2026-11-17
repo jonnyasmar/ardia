@@ -52,9 +52,15 @@ struct ArdiaStandIn {
   __weak ArdiaWebView *lentTo;
 };
 
-struct ArdiaLittlePage {
+enum class ArdiaHeldPageEnd { Painted, Loaded, Pressed, TimedOut, Detached };
+
+struct ArdiaFirstPaint {
+  BOOL created{};
   BOOL held{};
   BOOL settled{};
+  BOOL coldTab{};
+  BOOL scripted{};
+  CFTimeInterval heldAt{};
   float opacity{};
   NSUInteger generation{};
 };
@@ -111,8 +117,10 @@ struct ArdiaPageFocusState {
   ArdiaSentReports _sent;
   ArdiaLeave _leave;
   ArdiaFrameHold _frameHold;
+  void (^_swapReport)(BOOL heldTimedOut);
+  CFTimeInterval _swapReportAt;
   ArdiaStandIn _standIn;
-  ArdiaLittlePage _littlePage;
+  ArdiaFirstPaint _firstPaint;
   ArdiaReveal _reveal;
   ArdiaPageFocusState _focus;
   ArdiaPageReports _reports;
@@ -204,8 +212,6 @@ typedef NS_ENUM(NSInteger, ArdiaTransfer) {
 - (void)interfaceScaleChanged;
 - (BOOL)paints;
 - (BOOL)neighbourPageAsleep;
-- (void)holdLittlePage;
-- (void)revealLittlePage:(BOOL)animated;
 - (void)applyPainting;
 - (void)markTemporary;
 - (BOOL)seenByUser;
@@ -215,9 +221,18 @@ typedef NS_ENUM(NSInteger, ArdiaTransfer) {
 - (void)beginFrameHoldIfCold;
 - (void)exposePage;
 - (BOOL)releasePageForOffscreen;
+- (void)reportSwapShown:(void (^)(BOOL heldTimedOut))report;
 - (void)finishFrameHold;
 - (void)stopHolding;
 - (void)takeFocusFromLingeringPane;
+@end
+
+@interface ArdiaWebView (FirstPaintInternal)
+- (void)holdPageUntilPainted:(BOOL)created;
+- (void)holdCreatedPageShown;
+- (void)showHeldPage:(ArdiaHeldPageEnd)end;
+- (void)showHeldPageOnNextFrame;
+- (void)showHeldPageAfterLoad;
 @end
 
 @interface ArdiaWebView (StandInInternal)
@@ -235,6 +250,9 @@ typedef NS_ENUM(NSInteger, ArdiaTransfer) {
 - (void)requestFocusRestore;
 - (void)requestFocusRestoreIn:(NSWindow *)window;
 - (void)restoreFocusIfDue;
+- (BOOL)focusRememberedDevToolsIn:(NSWindow *)window;
+- (void)focusAfterLingeringPane;
+- (void)settleFirstShowFocus;
 - (void)focusAfterLoad;
 @end
 
@@ -314,6 +332,8 @@ void NoteEvent(int browserId, NSString *name, NSDictionary *payload);
 void AcceptDrops(NSView *root, BOOL accept);
 NSView *PaneUnder(NSView *view, NSView *ancestor);
 NSView *SharedAncestor(NSView *a, NSView *b);
+NSView *RenderWidgetIn(NSView *page);
+NSArray *FrameMarkOf(NSView *widget);
 
 template <typename T>
 T *Field(NSDictionary *d, NSString *key) {
@@ -340,6 +360,7 @@ NSPoint RootPointFromWindow(NSWindow *window, NSPoint inWindow);
 NSRect RootRectFromWindow(NSWindow *window, NSRect inWindow);
 CGFloat RootPointsPerLocalPoint(NSView *view);
 BOOL MayHoldUserActivation(NSWindow *window);
+BOOL TakeShiftClick(ArdiaWebView *view);
 
 void InstallControlPressMonitor();
 BOOL TracingPictureInPicture();

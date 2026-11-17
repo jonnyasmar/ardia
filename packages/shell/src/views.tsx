@@ -2,10 +2,13 @@ import { requireNativeViewManager } from "expo-modules-core";
 import type { ViewProps } from "react-native";
 import { nativeModule } from "./nativeModules";
 
+export type WindowProfileSwapped = { selection?: string; switchId?: number; profileLoaded?: boolean; activeMs?: number; swapMs?: number; heldTimedOut?: boolean };
 export type WindowProfileProps = ViewProps & {
   profile: string;
   selection?: string;
+  switchId?: number;
   neighbours: string[];
+  onSwapped?: (event: { nativeEvent: WindowProfileSwapped }) => void;
 };
 export const WindowProfile = requireNativeViewManager<WindowProfileProps>("ArdiaWindowProfile");
 
@@ -42,6 +45,10 @@ export type FadeLabelProps = ViewProps & {
 };
 
 export const FadeLabel = requireNativeViewManager<FadeLabelProps>("ArdiaFadeLabel");
+
+export type EdgeFadeMaskProps = ViewProps & { fadeWidth: number; floor: number; onset: number };
+
+export const EdgeFadeMask = requireNativeViewManager<EdgeFadeMaskProps>("ArdiaEdgeFadeMask");
 
 export type ActivitySpinnerProps = ViewProps;
 

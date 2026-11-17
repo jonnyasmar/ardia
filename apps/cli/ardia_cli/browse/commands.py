@@ -178,7 +178,36 @@ def failed_navigation(ctx: Ctx, url: str, error_text: str) -> BrowseError:
                     "if nothing does, say what couldn't be reached")
     elif "ERR_NAME_NOT_RESOLVED" in error_text:
         message += f". {host} has no address: check the spelling, or search for the site's current address"
+    elif https_only_block(url, error_text):
+        message += f". {HTTPS_ONLY_NOTE}"
     return BrowseError(message, code="navigation_failed")
+
+
+HTTPS_ONLY_NOTE = ("Ardia loads http:// addresses over https and blocks the page when the site has no working https, which is what this "
+                   "error usually means for an http:// address. Try the https:// address; if that fails too, say the site couldn't be reached")
+
+
+def site_silent(url: str, timeout: float, error: OutcomeUnknown) -> BrowseError:
+    from ardia_cli import command_metrics
+
+    if "didn't answer Page.navigate" not in error.message:
+        return error
+    command_metrics.flag("navigation_site_silent", True)
+    host = urlsplit(url).hostname or url
+    advice = "Trying the same address again rarely helps; say the site couldn't be reached, or use another source"
+    if url.startswith("https://"):
+        advice += ", and if you changed the address from http:// to https://, use it as the site gave it"
+    return BrowseError(f"{host} sent nothing back within {timeout:g} s, so {url} never started loading: the site may be down, very slow, "
+                       f"or not answering automated traffic. {advice}", code="timeout")
+
+
+def https_only_block(url: str, error_text: str) -> bool:
+    from ardia_cli import command_metrics
+
+    blocked = "ERR_BLOCKED_BY_CLIENT" in error_text and url.lower().startswith("http://")
+    if blocked:
+        command_metrics.flag("navigation_https_only_hint", True)
+    return blocked
 
 
 async def navigate(ctx: Ctx, page, url: str, until: str = "load"):
@@ -189,6 +218,8 @@ async def navigate(ctx: Ctx, page, url: str, until: str = "load"):
             result = await page.send("Page.navigate", {"url": url}, timeout=ctx.timeout)
         except Gated:
             raise BrowseError(f"Ardia's policy only lets the ardia command open web pages (http, https, data, about:blank); {url} isn't one", code="policy_refused") from None
+        except OutcomeUnknown as error:
+            raise site_silent(url, ctx.timeout, error) from None
         if result.get("errorText"):
             raise failed_navigation(ctx, url, result["errorText"])
         await page.recovered(ctx.timeout)
@@ -198,6 +229,8 @@ async def navigate(ctx: Ctx, page, url: str, until: str = "load"):
         result = await page.send("Page.navigate", {"url": url}, timeout=ctx.timeout)
     except Gated:
         raise BrowseError(f"Ardia's policy only lets the ardia command open web pages (http, https, data, about:blank); {url} isn't one", code="policy_refused") from None
+    except OutcomeUnknown as error:
+        raise site_silent(url, ctx.timeout, error) from None
     if result.get("errorText"):
         raise failed_navigation(ctx, url, result["errorText"])
     loader = result.get("loaderId")
@@ -429,7 +462,8 @@ def refuse_on_borrowed(ctx: Ctx, page, what: str):
 
 @command("open")
 async def cmd_open(ctx: Ctx, argv):
-    options, args = parse(argv, {"--enable": "multi", "--init-script": "multi", "--capture-console": "bool", "--headers": "value", "--label": "value", "--show": "bool"})
+    options, args = parse(argv, {"--enable": "multi", "--init-script": "multi", "--capture-console": "bool", "--headers": "value", "--label": "value", "--show": "bool",
+                                 "--read": "bool"})
     if options.get("headers"):
         raise Usage("ardia browse can't scope headers to an origin at launch; run `ardia browse set headers <json>` before `open`")
     ctx.options.setdefault("enable", []).extend(sum((value.split(",") for value in options.get("enable") or []), []))
@@ -442,7 +476,7 @@ async def cmd_open(ctx: Ctx, argv):
     show = wants_show(ctx, options)
     borrowed = state.extras.get("attached") if state.current and state.current == state.extras.get("attached") else None
     came_from = "about:blank"
-    reporting = bool(url) and not ctx.options.get("no_changes") and state.extras.get("top_command") != "script"
+    reporting = bool(url) and not ctx.options.get("no_changes") and state.extras.get("top_command") != "script" and not options.get("read")
     fresh_tab = not (state.current and state.current in state.target_infos and not borrowed)
     if fresh_tab:
         page = await new_tab(ctx, None if reporting else url, options.get("label"), show=show and not reporting)
@@ -484,6 +518,13 @@ async def cmd_open(ctx: Ctx, argv):
             where = f"→ Opened in its own background tab [{tab}]"
         if borrowed or not background:
             text += f"\n{where}; " + ("it takes input without being shown" if background else f"this Ardia doesn't deliver input there. use: ardia browse tab {tab} --show (or open <url> --show)")
+    if options.get("read"):
+        from ardia_cli import command_metrics
+
+        command_metrics.flag("open_read", True)
+        read = await cmd_read(ctx, [])
+        data["read"] = read.data
+        return Result(data, f"{text}\n\n{read.text}", page_content=True)
     result = Result(data, text)
     if reporting:
         report = await changes.arrival(ctx, page, came_from)
@@ -1151,7 +1192,7 @@ async def cmd_eval(ctx: Ctx, argv):
 
 
 SELECTOR_CALL = re.compile(r"""\b(querySelectorAll|querySelector|closest|matches)\(\s*(['"])((?:\\.|(?!\2).)*)\2""")
-UNQUOTED_VALUE = re.compile(r"""\[\s*([^\s~|^$*!=\]"']+)\s*([~|^$*]?=)\s*([^"'\]\s][^\]]*?)(\s+[iIsS])?\s*\]""")
+UNQUOTED_VALUE = re.compile(r"""\[\s*([^\s~|^$*!=\]"']+)\s*([~|^$*]?=)\s*([^"'\\\]\s][^\]]*?)(\s+[iIsS])?\s*\]""")
 PLAIN_VALUE = re.compile(r"-?[A-Za-z_][\w-]*")
 
 
@@ -1809,7 +1850,7 @@ async def wait_download(ctx: Ctx, trigger, destination: str | None, timeout: flo
 
     def listener(_page, method, params):
         if method == "Browser.downloadWillBegin" and not seen:
-            seen.update(guid=params.get("guid"), name=params.get("suggestedFilename") or "download")
+            seen.update(guid=params.get("guid"), name=params.get("suggestedFilename") or "download", url=params.get("url") or "")
         if method == "Browser.downloadProgress" and params.get("guid") == seen.get("guid") and params.get("state") in ("completed", "canceled") and not done.done():
             done.set_result(params.get("state"))
 
@@ -1829,8 +1870,44 @@ async def wait_download(ctx: Ctx, trigger, destination: str | None, timeout: flo
     if outcome != "completed":
         raise BrowseError("The download was canceled")
     target = destination or os.path.join(folder, os.path.basename(seen["name"]))
-    os.replace(os.path.join(folder, seen["guid"]), target)
+    saved = os.path.join(folder, seen["guid"])
+    if os.path.exists(saved):
+        os.replace(saved, target)
+    else:
+        Path(target).write_bytes(await fetch_again(ctx, seen.get("url") or ""))
     return target
+
+
+DOWNLOAD_FETCH_LIMIT = 50 * 1024 * 1024
+FETCH_BYTES = """async (url, limit) => {
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) return { status: response.status };
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > limit) return { size: bytes.length };
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return { data: btoa(text) };
+}"""
+
+
+async def fetch_again(ctx: Ctx, url: str) -> bytes:
+    from ardia_cli import command_metrics
+
+    remote = ("The browser saved the file on its own machine (a browser reached with --ws on another host), "
+              "and fetching it again from the page failed")
+    if not url:
+        raise BrowseError(f"{remote}: the download had no address", code="download_remote")
+    page = await ctx.state.page()
+    try:
+        got = await page.call(FETCH_BYTES, url, DOWNLOAD_FETCH_LIMIT, frame=page.main_frame, read=True)
+    except BrowseError as error:
+        raise BrowseError(f"{remote}: {error.message}", code="download_remote") from None
+    if not got or got.get("status"):
+        raise BrowseError(f"{remote}: HTTP {got.get('status') if got else 'no answer'}", code="download_remote")
+    if got.get("size"):
+        raise BrowseError(f"{remote}: the file is {got['size']:,} bytes, over the {DOWNLOAD_FETCH_LIMIT:,}-byte limit", code="download_remote")
+    command_metrics.flag("download_fetched_again", True)
+    return base64.b64decode(got["data"])
 
 
 @command("download")
@@ -1946,23 +2023,61 @@ async def cmd_read(ctx: Ctx, argv):
         content = readurl.post_process(await pdftext.page_text(page), options)
         return Result({"content": content, "contentType": "application/pdf", "finalUrl": page.url, "source": "pdf", "truncated": False, "url": page.url},
                       content, page_content=True)
+    empty_note = ""
     if selector:
-        content = await page.call("(s) => ardiaBrowse.queryAll(s).map((el) => ardiaBrowse.readable(el)).filter(Boolean).join('\\n\\n')",
-                                  selector, frame=frame, read=True)
+        content, empty_note = await read_scoped(page, frame, selector)
     else:
         content = await page.call("() => ardiaBrowse.readable()", frame=frame, read=True)
     content = readurl.post_process(content, options)
     readpages.note_virtualized(content)
     scope = "" if options.get("selector") else await page_scope(page, frame)
-    shown = f"{content}\n[scope: {scope}]" if scope else content
+    read_time = readpages.read_at()
+    shown = f"{content}\n[scope: {scope}]" if scope else (content or empty_note)
+    shown = f"{shown}\n[read {read_time}]" if shown else shown
     return Result({"content": content, "contentType": "text/html", "finalUrl": page.url, "source": "active-tab-html", "truncated": False, "url": page.url,
-                   "scope": scope or None}, shown, page_content=True)
+                   "scope": scope or None, "readAt": read_time}, shown, page_content=True)
 
 
 def render_json(value) -> str:
     from ardia_cli.browse.script import render_json as render
 
     return render(value)
+
+
+READ_SCOPED = "(s) => { const found = ardiaBrowse.queryAll(s); return {matched: found.length, text: found.map((el) => ardiaBrowse.readable(el)).filter(Boolean).join('\\n\\n')}; }"
+
+
+async def read_scoped(page, frame, selector: str) -> tuple[str, str]:
+    from ardia_cli import command_metrics
+    from ardia_cli.browse.readpages import THIN_POLL, THIN_WAIT
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + THIN_WAIT
+    got = {"matched": 0, "text": ""}
+    in_main = frame == page.main_frame
+    while True:
+        try:
+            got = await page.call(READ_SCOPED, selector, frame=frame, read=True)
+        except BrowseError as error:
+            if error.code not in ("document_changed", "page_navigated", "frame_gone") or (error.code == "frame_gone" and not in_main):
+                raise
+            got = {"matched": 0, "text": ""}
+            if in_main:
+                frame = page.main_frame
+        if (got.get("matched") and (got.get("text") or "").strip()) or loop.time() + THIN_POLL >= deadline:
+            break
+        await asyncio.sleep(THIN_POLL)
+    matched = got.get("matched") or 0
+    if not matched:
+        raise BrowseError(f"Nothing on the page matches {selector} (waited {THIN_WAIT:g} s for it). Read without -s, or check it with snapshot -i",
+                          code="not_found")
+    text = got.get("text") or ""
+    if text.strip():
+        return text, ""
+    command_metrics.flag("read_scope_empty", True)
+    what = "1 element" if matched == 1 else f"{matched} elements"
+    return text, (f"({selector} matched {what} with no text after {THIN_WAIT:g} s: the page may still be loading into it, or its content "
+                  "is elsewhere. Read without -s, or snapshot -i to see what's there)")
 
 
 async def page_scope(page, frame) -> str:
@@ -2183,6 +2298,7 @@ async def cmd_batch(ctx: Ctx, argv):
         else:
             outcomes.append({"command": ["close"], "success": False, "result": None, "code": "not_run", "text": None,
                              "error": "close not run: an earlier line failed or didn't run, so the session stays open"})
+    compact_batch_lines(outcomes)
     text = "\n\n".join((outcome["text"] if outcome["success"] or outcome.get("text") else f"✗ {outcome['error']}") or "" for outcome in outcomes)
     if options.get("out"):
         text = save_batch(ctx, options["out"], text, outcomes)
@@ -2193,6 +2309,41 @@ async def cmd_batch(ctx: Ctx, argv):
     if any(not outcome["success"] for outcome in outcomes):
         result.failed = True
     return result
+
+
+VALUE_ONLY_LINE = re.compile(r"^~ .*\(was .*\)$|^~ option .*\(was (\[selected\]|plain)\)$")
+NOTHING_ELSE = "→ Nothing else on the page changed yet."
+COMPACTED_COMMANDS = {"fill", "select", "check", "uncheck", "type"}
+
+
+def value_only(text: str | None) -> bool:
+    lines = [line for line in (text or "").split("\n") if line.strip()]
+    if len(lines) < 2 or not lines[0].startswith("✓") or lines[1].strip() != "changes:":
+        return False
+    rest = [line for line in lines[2:] if not line.startswith(NOTHING_ELSE)]
+    return bool(rest) and all(VALUE_ONLY_LINE.match(line.strip()) for line in rest)
+
+
+def compact_batch_lines(outcomes: list[dict]):
+    from ardia_cli import command_metrics
+
+    succeeded = [index for index, outcome in enumerate(outcomes) if outcome["success"]]
+    if len(succeeded) < 2:
+        return
+    compacted = 0
+    for index in succeeded[:-1]:
+        outcome = outcomes[index]
+        command = outcome["command"]
+        words = command if isinstance(command, list) else shlex.split(str(command))
+        name = words[0] if words else ""
+        if words[:1] == ["find"] and len(words) >= 4:
+            name = words[3] if words[1] in ("role", "text", "label", "placeholder", "alt", "title", "testid") else words[2]
+        if name not in COMPACTED_COMMANDS or not value_only(outcome.get("text")):
+            continue
+        outcome["text"] = "✓ " + " ".join(word if re.fullmatch(r"[\w@#.:/=+,-]+", word) else json.dumps(word, ensure_ascii=False) for word in words)
+        compacted += 1
+    if compacted:
+        command_metrics.add("batch_lines_compacted", compacted)
 
 
 FETCHING = re.compile(r"\bfetch\s*\(|\bXMLHttpRequest\b|\bnew\s+DOMParser\b|\bwindow\.open\s*\(")

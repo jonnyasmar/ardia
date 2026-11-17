@@ -188,8 +188,10 @@ def spill(text: str) -> str | None:
         if not folder.is_dir() or folder.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
             return None
         fd, path = tempfile.mkstemp(prefix="output-", suffix=".txt", dir=folder)
+        from ardia_cli.printable import well_formed
+
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+            handle.write(well_formed(text))
         older = sorted(folder.glob("output-*.txt"), key=lambda item: item.stat().st_mtime)[:-SPILL_KEEP]
         for item in older:
             item.unlink(missing_ok=True)
@@ -482,6 +484,11 @@ class Daemon:
         what = f"`{running['name']}`" if running.get("name") else "another command"
         seconds = QUEUE_WAIT if waited is True else waited
         waiting = f"this command waited {seconds:g} s for it and gave up without running" if waited else "this command didn't run"
+        stuck = [self.state.tab_id(page.target_id) for page in list(self.state.pages.values())
+                 if getattr(page, "unanswered_at", 0.0) and time.monotonic() - page.unanswered_at < 120]
+        if stuck:
+            command_metrics.flag("session_busy_on_stuck_tab", True)
+            what += f", which is waiting on [{stuck[0]}], a tab whose page isn't answering (its own scripts keep it busy)"
         return BrowseError(f"This session is still running {what}{age}; {waiting}. A session runs one command at a time: wait for it "
                            "(a long `script` returns when done), or run independent work with `--session <name>`, which gets its own tab",
                            code="session_busy")
@@ -582,7 +589,9 @@ def timed_out(name: str, limit: float) -> BrowseError:
 
 
 def encode_answer(code: int, out: str, err: str, fields: dict | None = None) -> bytes:
-    data = (json.dumps({"exit": code, "out": out, "err": err, **(fields or {})}, ensure_ascii=False) + "\n").encode()
+    from ardia_cli.printable import well_formed
+
+    data = (well_formed(json.dumps({"exit": code, "out": out, "err": err, **(fields or {})}, ensure_ascii=False)) + "\n").encode()
     if len(data) <= MAX_RESPONSE:
         return data
     message = f"✗ The answer was too large ({len(data)} bytes, the limit is {MAX_RESPONSE}); narrow it (snapshot -s, -d, --max-output)\n"

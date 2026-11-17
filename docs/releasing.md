@@ -24,6 +24,9 @@ GitHub Actions. Each has these assets:
 - `ArdiaCore-<engine tree>-source.tar.xz`, with that archive when the engine is built on Helium (release.sh finds
   Helium's code in the framework): copies of the GitHub tags `engine/patches/build/env.sh` pins that aren't in this
   repo (`scripts/engine-source.sh`), and where Chromium's source is. See "Source and licenses" below.
+- `ArdiaCore-<engine tree:12>-symbols.tar.xz` and `ArdiaCore-<engine tree:12>-uuids.txt`, only on an `engine-<tree:12>`
+  prerelease: the dSYMs of the engine's unstripped build and the UUID of each image they name, which
+  `scripts/symbolicate-crash.sh` reads to name the frames of a crash in Chromium Framework. See "Engines" below.
 
 Each version's notes are a file in the repo, `docs/release-notes/<version>.md` (how to write one:
 `docs/release-notes/README.md`). The GitHub release, the update dialog and the website's
@@ -98,10 +101,14 @@ phones a build that isn't a release says Dev.
   failed jobs of the same run, or dispatch iOS Release with `mode=upload` and the version; never re-run the whole
   release. Builds already in TestFlight under the iPhone app's old 1.0 don't block the shared version, since nothing
   was released on the App Store; any App Store version drafted under 1.0 has to move to the shared version before it
-  is submitted. Sending a build to App Store review stays a step a person takes (`docs/ios.md` › Releasing to
-  TestFlight).
-- **Android.** `-PardiaVersion=<version>` gives the build that version and its channel (`docs/android.md` › Build and
-  test). Nothing distributes it yet: that needs a Play Console account and an upload key.
+  is submitted. Sending a build to App Store review stays a step a person takes (`docs/phone.md` › TestFlight). On the
+  Expo branch the iPhone app is the Expo app, and an upload with public testers is refused until the owner moves it
+  to them, so a real run with `iphone=true` stops at that job.
+- **Android.** The Expo app's release version is its versionName, and its versionCode is major × 100,000,000 + minor ×
+  1,000,000 + patch × 1,000 plus the nightly number, or 999 for a stable (0.2.47-nightly.2 is 2047002, 0.2.47 is
+  2047999; `apps/phone/scripts/android-version.ts`). A build without one is Dev. It ships as an APK on GitHub Releases
+  through `android-release.yml`, as a draft prerelease `android-v<version>` that only the owner publishes
+  (`docs/phone.md` › Android release). No Play listing.
 - **CLI.** It follows the app: the app installs the CLI of its own version, with the digest pinned in its bundle
   (`docs/cli.md`), so a Nightly Mac runs the nightly CLI.
 - **Windows.** Every release, nightly or stable, builds it in the Release workflow's `windows` job, attaches
@@ -351,6 +358,26 @@ packs one (stripped, unpruned) with its Helium source, uploads both to the prere
 latest, so the feed and the download links never move to it) and appends `<tree> engine-<tree:12> <sha256>` to
 `packages/ardiacore/prebuilt-engines.tsv`: commit and push that line before dispatching. A release whose `engine/`
 tree has no engine fails its build at once, saying which script to run.
+
+The same script uploads the engine's symbols: `ArdiaCore-<tree:12>-symbols.tar.xz`, the dSYMs the official build writes
+beside the framework in `out/Release_GN_arm64` (`Chromium Framework.dSYM` and the helpers'; function names only, as
+`symbol_level=0` builds no line tables), and `ArdiaCore-<tree:12>-uuids.txt`, a `<uuid> <arch> <DWARF file>` row per
+image. It copies them with the framework under the chromium lock and refuses a framework whose own dSYM doesn't carry its
+UUID. The framework itself is already stripped, so strip-engine.sh's copies in `symbols/` name almost nothing. A crash's
+"Chromium Framework + 0x2e2334" is named with `scripts/symbolicate-crash.sh <Chromium Framework UUID> 0x2e2334 …`: it
+finds the engine release whose rows hold that UUID, downloads that dSYM into `dist/engine-symbols` and runs
+`atos -arch arm64 -l 0x0` on the offsets. Engines published before the symbols were uploaded have none: the next build
+overwrites `out/`'s dSYMs. To backfill one, rebuild its engine key; if the framework comes back with the published UUID,
+copy the framework and its dSYMs out of `out/` under the lock and upload the pair under the exact names
+`symbolicate-crash.sh` downloads (`key` is the release tag without `engine-`):
+
+```sh
+key=<tree:12> dir="dist/engine-$key-backfill" release_out="$HOME/chromium-build/chromium_git/chromium/src/out/Release_GN_arm64"
+mkdir -p "$dir/dsyms"
+scripts/agent/locked chromium -- bash -c 'cp -cR "$1/Chromium Framework.framework" "$2/" && cp -cR "$1"/*.dSYM "$2/dsyms/"' copy "$release_out" "$dir"
+scripts/lib/pack-symbols.sh "$dir/Chromium Framework.framework" "$dir/dsyms" "$dir/ArdiaCore-$key-symbols.tar.xz" "$dir/ArdiaCore-$key-uuids.txt"
+gh release upload "engine-$key" -R mantrakp04/ardia --clobber "$dir/ArdiaCore-$key-symbols.tar.xz" "$dir/ArdiaCore-$key-uuids.txt"
+```
 
 ## The engine switch (0.2.21 → 0.2.22)
 

@@ -11,9 +11,13 @@
 
 #include "ardia/core/ac_launch_switches.h"
 #include "ardia/win/ac_calls.h"
+#include "ardia/win/autoplay.h"
 #include "ardia/win/external_apps.h"
+#include "ardia/win/kept_pages.h"
+#include "ardia/win/page_links.h"
 #include "ardia/win/tab_events.h"
 #include "base/containers/span.h"
+#include "base/barrier_callback.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -29,6 +33,9 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/devtools/devtools_window.h"
+#include "chrome/browser/performance_manager/policies/cannot_discard_reason.h"
+#include "chrome/browser/performance_manager/policies/discard_eligibility_policy.h"
+#include "chrome/browser/performance_manager/policies/page_discarding_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resource_coordinator/lifecycle_unit_state.mojom.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
@@ -40,6 +47,10 @@
 #include "chrome/common/content_restriction.h"
 #include "chrome/common/pref_names.h"
 #include "components/blocked_content/popup_blocker_tab_helper.h"
+#include "components/performance_manager/public/decorators/page_live_state_decorator.h"
+#include "components/performance_manager/public/graph/graph.h"
+#include "components/performance_manager/public/graph/page_node.h"
+#include "components/performance_manager/public/performance_manager.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/find_in_page/find_types.h"
@@ -49,6 +60,7 @@
 #include "components/zoom/page_zoom.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_agent_host_client.h"
+#include "content/public/browser/media_session.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
@@ -58,7 +70,6 @@
 #include "content/public/common/url_utils.h"
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
-#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -79,6 +90,7 @@ namespace ardia_win {
 namespace {
 
 constexpr size_t kMaxEvaluationResultBytes = 4 * 1024 * 1024;
+constexpr base::TimeDelta kClickAnswerDeadline = base::Seconds(10);
 
 constexpr char kEvaluationStart[] =
     "new Promise((resolve) => {(function(post){'use strict';\n";
@@ -591,17 +603,11 @@ void MediaCommand(content::WebContents* contents,
                   Reply reply) {
   ThawHiddenPage(contents);
   const std::string action = Text(args, "action");
-  content::RenderFrameHost* frame = contents->GetPrimaryMainFrame();
-  if ((action == "play" || action == "toggle") && frame &&
-      frame->IsRenderFrameLive()) {
-    frame->NotifyUserActivation(
-        blink::mojom::UserActivationNotificationType::kInteraction);
-  }
   base::DictValue command;
   command.Set("action", action);
   command.Set("seconds", args.FindDouble("seconds").value_or(0));
   if (std::optional<std::string> json = base::WriteJson(command)) {
-    RunInPage(contents, kMediaCommandStart + *json + kMediaCommandEnd);
+    RunMediaCommand(contents, kMediaCommandStart + *json + kMediaCommandEnd);
   }
   std::move(reply).Run(Ok());
 }
@@ -716,6 +722,326 @@ void Discard(content::WebContents* contents,
   std::move(reply).Run(std::move(result));
 }
 
+void AnswerKeptBy(Reply reply, base::ListValue kept_by) {
+  base::DictValue result;
+  result.Set("keptBy", std::move(kept_by));
+  std::move(reply).Run(std::move(result));
+}
+
+void SleepIfHidden(content::WebContents* contents,
+                   const base::DictValue& args,
+                   Reply reply) {
+  namespace policies = performance_manager::policies;
+  using performance_manager::PerformanceManager;
+  base::ListValue unavailable;
+  unavailable.Append(-1);
+  if (!PerformanceManager::IsAvailable()) {
+    return AnswerKeptBy(std::move(reply), std::move(unavailable));
+  }
+  base::WeakPtr<performance_manager::PageNode> page =
+      PerformanceManager::GetPrimaryPageNodeForWebContents(contents);
+  if (!page) {
+    return AnswerKeptBy(std::move(reply), std::move(unavailable));
+  }
+  performance_manager::Graph* graph = page->GetGraph();
+  auto* eligibility = policies::DiscardEligibilityPolicy::GetFromGraph(graph);
+  auto* discarding = policies::PageDiscardingHelper::GetFromGraph(graph);
+  if (!eligibility || !discarding) {
+    return AnswerKeptBy(std::move(reply), std::move(unavailable));
+  }
+  if (std::vector<int> kept = KeptBy(page.get()); !kept.empty()) {
+    base::ListValue codes;
+    for (int code : kept) {
+      codes.Append(code);
+    }
+    return AnswerKeptBy(std::move(reply), std::move(codes));
+  }
+  const auto reason =
+      policies::DiscardEligibilityPolicy::DiscardReason::PROACTIVE;
+  const double seconds = args.FindDouble("seconds").value_or(0);
+  std::vector<policies::CannotDiscardReason> kept_by;
+  if (eligibility->CanDiscardWithCustomRecentVisibilityWindow(
+          page.get(), reason, base::Seconds(seconds), &kept_by) !=
+      policies::CanDiscardResult::kEligible) {
+    base::ListValue codes;
+    for (policies::CannotDiscardReason kept : kept_by) {
+      codes.Append(static_cast<int>(kept));
+    }
+    return AnswerKeptBy(std::move(reply),
+                        codes.empty() ? std::move(unavailable)
+                                      : std::move(codes));
+  }
+  if (!discarding->ImmediatelyDiscardMultiplePages({page.get()}, reason)) {
+    return AnswerKeptBy(std::move(reply), std::move(unavailable));
+  }
+  AnswerKeptBy(std::move(reply), base::ListValue());
+}
+
+class TestDevToolsClient
+    : public content::DevToolsAgentHostClient,
+      public content::WebContentsUserData<TestDevToolsClient> {
+ public:
+  ~TestDevToolsClient() override { Detach(); }
+
+  bool Attach() {
+    if (host_) {
+      return true;
+    }
+    host_ = content::DevToolsAgentHost::GetOrCreateFor(&GetWebContents());
+    if (!host_ || !host_->AttachClient(this)) {
+      host_ = nullptr;
+      return false;
+    }
+    return true;
+  }
+
+  void Detach() {
+    if (scoped_refptr<content::DevToolsAgentHost> host = std::move(host_)) {
+      host->DetachClient(this);
+    }
+  }
+
+  void DispatchProtocolMessage(content::DevToolsAgentHost* agent_host,
+                               base::span<const uint8_t> message) override {}
+  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override {
+    host_ = nullptr;
+  }
+
+ private:
+  friend class content::WebContentsUserData<TestDevToolsClient>;
+
+  explicit TestDevToolsClient(content::WebContents* contents)
+      : content::WebContentsUserData<TestDevToolsClient>(*contents) {}
+
+  scoped_refptr<content::DevToolsAgentHost> host_;
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
+};
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(TestDevToolsClient);
+
+void TestClientForTest(content::WebContents* contents,
+                       const base::DictValue& args,
+                       Reply reply) {
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(Error("testClient is for test instances"));
+    return;
+  }
+  TestDevToolsClient::CreateForWebContents(contents);
+  TestDevToolsClient* client = TestDevToolsClient::FromWebContents(contents);
+  if (args.FindBool("attach").value_or(false)) {
+    std::move(reply).Run(client->Attach() ? Ok()
+                                          : Error("can't attach to the tab"));
+    return;
+  }
+  client->Detach();
+  std::move(reply).Run(Ok());
+}
+
+const char* EligibilityName(
+    performance_manager::policies::CanDiscardResult result) {
+  switch (result) {
+    case performance_manager::policies::CanDiscardResult::kEligible:
+      return "eligible";
+    case performance_manager::policies::CanDiscardResult::kProtected:
+      return "protected";
+    case performance_manager::policies::CanDiscardResult::kDisallowed:
+      return "disallowed";
+  }
+  return "unknown";
+}
+
+void DiscardEligibilityForTest(content::WebContents* contents,
+                               const base::DictValue& args,
+                               Reply reply) {
+  namespace policies = performance_manager::policies;
+  using performance_manager::PerformanceManager;
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(
+        Error("discardEligibilityForTest is for test instances"));
+    return;
+  }
+  base::WeakPtr<performance_manager::PageNode> page =
+      PerformanceManager::IsAvailable()
+          ? PerformanceManager::GetPrimaryPageNodeForWebContents(contents)
+          : nullptr;
+  auto* eligibility =
+      page ? policies::DiscardEligibilityPolicy::GetFromGraph(page->GetGraph())
+           : nullptr;
+  if (!eligibility) {
+    std::move(reply).Run(Error("no discard eligibility for the page"));
+    return;
+  }
+  using DiscardReason = policies::DiscardEligibilityPolicy::DiscardReason;
+  const std::string reason_name = Text(args, "reason");
+  const DiscardReason reason =
+      reason_name == "urgent"   ? DiscardReason::URGENT
+      : reason_name == "frozen" ? DiscardReason::FROZEN_WITH_GROWING_MEMORY
+                                : DiscardReason::PROACTIVE;
+  auto* const host = policies::g_ardia_keeps_page;
+  if (args.FindBool("withoutHost").value_or(false)) {
+    policies::g_ardia_keeps_page = nullptr;
+  }
+  std::vector<policies::CannotDiscardReason> reasons;
+  const policies::CanDiscardResult result =
+      eligibility->CanDiscardWithCustomRecentVisibilityWindow(
+          page.get(), reason, base::TimeDelta(), &reasons);
+  policies::g_ardia_keeps_page = host;
+  base::ListValue chromium;
+  for (policies::CannotDiscardReason each : reasons) {
+    chromium.Append(static_cast<int>(each));
+  }
+  base::ListValue kept;
+  for (int code : KeptBy(page.get())) {
+    kept.Append(code);
+  }
+  base::DictValue answer;
+  answer.Set("result", EligibilityName(result));
+  answer.Set("reasons", std::move(chromium));
+  answer.Set("keptBy", std::move(kept));
+  std::move(reply).Run(std::move(answer));
+}
+
+void ClickForTest(content::WebContents* contents,
+                  const base::DictValue& args,
+                  Reply reply) {
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(Error("clickForTest is for test instances"));
+    return;
+  }
+  const double x = args.FindDouble("x").value_or(0);
+  const double y = args.FindDouble("y").value_or(0);
+  const int modifiers = Integer(args, "modifiers");
+  double* dispatched_at = new double(0);
+  const auto answered = base::BarrierCallback<std::optional<std::string>>(
+      3, base::BindOnce(
+             [](Reply reply, const double* dispatched_at,
+                std::vector<std::optional<std::string>> errors) {
+               for (const std::optional<std::string>& error : errors) {
+                 if (error) {
+                   std::move(reply).Run(Error(*error));
+                   return;
+                 }
+               }
+               base::DictValue answer = Ok();
+               answer.Set("dispatchedAt", *dispatched_at);
+               std::move(reply).Run(std::move(answer));
+             },
+             std::move(reply), base::Owned(dispatched_at)));
+  for (const char* type : {"mouseMoved", "mousePressed", "mouseReleased"}) {
+    if (std::string_view(type) == "mousePressed") {
+      *dispatched_at = base::Time::Now().InMillisecondsFSinceUnixEpoch();
+    }
+    base::DictValue params;
+    params.Set("type", type);
+    params.Set("x", x);
+    params.Set("y", y);
+    params.Set("modifiers", modifiers);
+    if (std::string_view(type) != "mouseMoved") {
+      params.Set("button", "left");
+      params.Set("clickCount", 1);
+    }
+    CallDevTools(contents, "Input.dispatchMouseEvent", std::move(params),
+                 kClickAnswerDeadline,
+                 base::BindOnce(
+                     [](std::string_view type,
+                        base::RepeatingCallback<void(std::optional<std::string>)>
+                            done,
+                        std::optional<base::DictValue> result,
+                        std::optional<std::string> error) {
+                       done.Run(
+                           error ? std::optional<std::string>(
+                                       std::string(type) + ": " + *error)
+                                 : std::nullopt);
+                     },
+                     std::string_view(type), answered));
+  }
+}
+
+void ReattachLinksForTest(content::WebContents* contents,
+                          const base::DictValue& args,
+                          Reply reply) {
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(Error("reattachLinksForTest is for test instances"));
+    return;
+  }
+  PageLinks* links = PageLinks::FromWebContents(contents);
+  if (!links) {
+    std::move(reply).Run(Error("the tab has no link script"));
+    return;
+  }
+  links->ReattachForTest();
+  std::move(reply).Run(Ok());
+}
+
+void TouchForTest(content::WebContents* contents,
+                  const base::DictValue& args,
+                  Reply reply) {
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(Error("touchForTest is for test instances"));
+    return;
+  }
+  base::DictValue point;
+  point.Set("x", args.FindDouble("x").value_or(0));
+  point.Set("y", args.FindDouble("y").value_or(0));
+  base::ListValue down;
+  down.Append(std::move(point));
+  base::DictValue start;
+  start.Set("type", "touchStart");
+  start.Set("touchPoints", std::move(down));
+  CallDevTools(contents, "Input.dispatchTouchEvent", std::move(start),
+               std::nullopt, base::BindOnce(&Ignore));
+  base::DictValue end;
+  end.Set("type", "touchEnd");
+  end.Set("touchPoints", base::ListValue());
+  CallDevTools(contents, "Input.dispatchTouchEvent", std::move(end),
+               std::nullopt, base::BindOnce(&Ignore));
+  base::DictValue last;
+  last.Set("expression", "0");
+  CallDevTools(contents, "Runtime.evaluate", std::move(last), std::nullopt,
+               base::BindOnce(
+                   [](Reply reply, std::optional<base::DictValue> result,
+                      std::optional<std::string> error) {
+                     std::move(reply).Run(error ? Error(*error) : Ok());
+                   },
+                   std::move(reply)));
+}
+
+void MediaSessionActionForTest(content::WebContents* contents,
+                               const base::DictValue& args,
+                               Reply reply) {
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(Error("mediaSessionActionForTest is for test instances"));
+    return;
+  }
+  const std::string action = Text(args, "action");
+  if (action != "play" && action != "pause") {
+    std::move(reply).Run(Error("the action is play or pause"));
+    return;
+  }
+  content::MediaSession::Get(contents)->DidReceiveAction(
+      action == "play" ? media_session::mojom::MediaSessionAction::kPlay
+                       : media_session::mojom::MediaSessionAction::kPause);
+  std::move(reply).Run(Ok());
+}
+
+void InsertTextForTest(content::WebContents* contents,
+                       const base::DictValue& args,
+                       Reply reply) {
+  if (!ardiacore::TestInstance()) {
+    std::move(reply).Run(Error("insertText is for test instances"));
+    return;
+  }
+  base::DictValue params;
+  params.Set("text", Text(args, "text"));
+  CallDevTools(contents, "Input.insertText", std::move(params), std::nullopt,
+               base::BindOnce(
+                   [](Reply reply, std::optional<base::DictValue> result,
+                      std::optional<std::string> error) {
+                     std::move(reply).Run(error ? Error(*error) : Ok());
+                   },
+                   std::move(reply)));
+}
+
 void SetFrozen(content::WebContents* contents,
                const base::DictValue& args,
                Reply reply) {
@@ -778,12 +1104,30 @@ constexpr NamedMethod kMethods[] = {
     {"pageCookies", &PageCookies},
     {"openBlockedPopup", &OpenBlockedPopup},
     {"discard", &Discard},
+    {"sleepIfHidden", &SleepIfHidden},
+    {"insertText", &InsertTextForTest},
+    {"clickForTest", &ClickForTest},
+    {"touchForTest", &TouchForTest},
+    {"reattachLinksForTest", &ReattachLinksForTest},
+    {"mediaSessionActionForTest", &MediaSessionActionForTest},
+    {"testClient", &TestClientForTest},
+    {"discardEligibilityForTest", &DiscardEligibilityForTest},
     {"setFrozen", &SetFrozen},
     {"resolveUnresponsive", &ResolveUnresponsive},
     {"externalAppAlive", &ExternalAppAliveCall},
     {"externalAppForget", &ExternalAppForgetCall},
 };
 
+}
+
+void UnmarkEngineDevTools(content::WebContents* contents) {
+  performance_manager::PageLiveStateDecorator::SetIsDevToolsOpen(contents,
+                                                                 false);
+}
+
+const content::DevToolsAgentHostClient* EngineDevToolsClient(
+    content::WebContents* contents) {
+  return DevToolsCaller::FromWebContents(contents);
 }
 
 bool CallTabMethod(content::WebContents* contents,

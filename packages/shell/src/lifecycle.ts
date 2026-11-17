@@ -10,14 +10,28 @@ export type AppEvent =
   | { type: "resignActive" }
   | { type: "screenLocked" }
   | { type: "lockedOrAsleep" }
-  | { type: "switcherReleased" }
+  | { type: "switcherReleased"; afterMenu?: boolean }
   | { type: "switcherKey"; key: "escape" | "next" | "previous" | "close" }
   | { type: "switcherMouseUp" }
   | { type: "dragEscape" }
   | { type: "unclaimedEscape"; windowId: string }
+  | { type: "snapKeyHandedBack"; windowId: string; afterMenu?: boolean }
   | { type: "centeredResize" }
   | { type: "appLinkOpened"; windowId: string | null }
-  | { type: "littleArdiaReturnedToApp" };
+  | { type: "littleArdiaReturnedToApp" }
+  | { type: "windowTitleRead" }
+  | { type: "keyHoldReplay"; tag: number; count: number }
+  | { type: "littleArdiaGlobalShortcut" }
+  | { type: "windowDragLoop" }
+  | {
+      type: "pasteRefused";
+      reason: string;
+      gateOpen: boolean;
+      layout?: string;
+      types?: string[];
+      responder?: string;
+      dropped?: number;
+    };
 
 export type AppearanceMode = "auto" | "light" | "dark";
 

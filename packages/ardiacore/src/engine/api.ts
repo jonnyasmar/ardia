@@ -10,7 +10,7 @@ import type { HistoryChangedBatch, HistoryWireRow } from "../history";
 import type { FaviconImage } from "../favicons";
 import type { Download, DownloadSettings } from "../downloads";
 import type {
-  BatterySaverMode, BatterySaverState, CliControlStatus, CliTabTarget, EngineComponent, EngineInfo, EngineTask, HoverLostEpisode, MemorySaverRequest, MemorySaverState, SystemState,
+  BatterySaverMode, BatterySaverState, CliControlStatus, CliTabTarget, EngineComponent, EngineInfo, EngineTask, HoverLostEpisode, MemorySaverRequest, PressLoopLongReport, MemorySaverState, PopupProtectedMedia, SystemState, WindowUnpaintedRecord,
 } from "../engineDomain";
 import type { ExternalAppAllowance, PermissionRequest, PermissionResult } from "../permissions";
 import type { BrowsingDataType } from "../profiles";
@@ -120,9 +120,9 @@ export type EngineCalls = {
   "extensions.reload": [Profile & { id: string }, { ok: true }];
   "extensions.configure": [Profile & { id: string; options: Record<string, unknown> }, { ok: true }];
   "extensions.chooseFolder": [{}, string | null];
-  "extensions.resolveInstallPrompt": [{ requestId: string; accepted: boolean }, null];
-  "extensions.actionStates": [{ tabId: string; ids: string[] }, Record<string, ActionState>];
-  "extensions.sidePanelUrl": [{ tabId: string; extensionId: string }, string | null];
+  "extensions.resolveInstallPrompt": [Profile & { requestId: string; accepted: boolean }, null];
+  "extensions.actionStates": [Profile & { tabId: string; ids: string[] }, Record<string, ActionState>];
+  "extensions.sidePanelUrl": [Profile & { tabId: string; extensionId: string }, string | null];
   "extensions.watchActions": [Profile, Done];
   "extensions.syncState": [Profile, ExtensionsSyncState];
   "extensions.syncApply": [Profile & ExtensionsSyncApply, ExtensionsSyncApplied];
@@ -185,7 +185,6 @@ export type EngineCalls = {
   "webView.setPeekOtherSiteTabs": [{ tabIds: string[] }, null];
   "webView.setSelectionPopover": [{ enabled: boolean }, null];
   "webView.setBlockAutoplayEverywhere": [{ enabled: boolean }, null];
-  "webView.setFairPlayInChromium": [{ enabled: boolean }, null];
   "webView.setCommandScrollZoom": [{ enabled: boolean }, null];
   "webView.setLittleArdiaOpensNewTabLinks": [{ enabled: boolean }, null];
   "webView.setPopupsOpenAsTabs": [{ enabled: boolean }, null];
@@ -194,6 +193,7 @@ export type EngineCalls = {
   "webView.setVideoUpscalingTestConditions": [{ lowPower?: boolean; thermalPressure?: boolean; capturing?: boolean }, null];
   "webView.videoUpscalingState": [{}, VideoUpscalingState | null];
   "webView.takeContentDrift": [{}, { layouts: number; fits: number; maxPoints: number }];
+  "webView.takeFirstPaintHolds": [{}, { held: number; painted: number; loaded: number; pressed: number; timedOut: number; heldMs: number }];
 
   "webKit.removeDownloadStaging": [{ path: string }, boolean];
   "webKit.endPrivateSession": [{ session: string }, null];
@@ -212,6 +212,11 @@ export type EngineEvents = {
   "engine.systemState": SystemState;
   "engine.cliControl": CliControlStatus;
   "engine.hoverLost": HoverLostEpisode;
+  "engine.popupProtectedMedia": PopupProtectedMedia;
+  "engine.devToolsKeyKept": Record<string, never>;
+  "engine.cursorRestored": { hidden: boolean };
+  "engine.windowUnpainted": WindowUnpaintedRecord;
+  "engine.pressLoopLong": PressLoopLongReport;
   "tabs.strips": TabStripTransaction;
   "downloads.changed": Download;
   "permissions.requested": PermissionRequest;

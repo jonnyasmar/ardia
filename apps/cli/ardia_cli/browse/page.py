@@ -4,7 +4,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from ardia_cli.browse.errors import BrowseError, CdpError, CdpTimeout, Gated, NotFocusable, OutcomeUnknown
+from ardia_cli.browse.errors import BrowseError, CdpError, CdpTimeout, Gated, NotFocusable, OutcomeUnknown, PageBusy
 from ardia_cli.browse.inputs import Input
 from ardia_cli.browse.js import LIBRARY
 
@@ -20,6 +20,8 @@ WORLD_NAME = "ardia-browse"
 CONSOLE_LIMIT = 1000
 ERROR_LIMIT = 500
 REQUEST_LIMIT = 1000
+FETCHES_TRACKED = 256
+FETCH_FRESH = 1.5
 RECORD_TEXT_LIMIT = 64 * 1024
 HEADER_VALUE_LIMIT = 8 * 1024
 HEADERS_LIMIT = 64 * 1024
@@ -32,6 +34,11 @@ LIVE_WAIT = 0.5
 DETACHED = "Ardia detached this tab from the ardia command while it was in use (the tab closed, crashed, went to sleep or moved to a window Ardia keeps for itself). Run the command again"
 CRASHED = "This tab's page crashed. `ardia browse reload` brings it back; `ardia browse close` or `tab close` closes it"
 CRASH_PROBE = 5.0
+BUSY_PROBE = 3.0
+BUSY_MEMORY = 120.0
+BUSY_WHY = ("the page's own scripts are keeping its tab busy, so it isn't answering. While it stays that way, commands on this tab give up "
+            "after {probe:g} s instead of waiting; `ardia browse reload` it, or work from a lighter page (search results, the site's own API, "
+            "or `read --http <url>`)")
 CRASH_SAFE = frozenset({"Inspector.enable", "Page.reload", "Page.navigate"})
 SETUP_NAMES = {
     "Emulation.setDeviceMetricsOverride": "the viewport or device size", "Emulation.setTouchEmulationEnabled": "touch emulation",
@@ -40,6 +47,7 @@ SETUP_NAMES = {
     "Network.setExtraHTTPHeaders": "the extra headers",
 }
 ROUTE_PATTERNS = [{"urlPattern": "*", "requestStage": "Request"}]
+OTHER_WORLD = "same JavaScript world"
 STALE_CONTEXT = ("Cannot find context", "Execution context was destroyed", "Cannot find default execution context", "Inspected target navigated")
 
 
@@ -140,6 +148,9 @@ class Page:
         self.requests: collections.OrderedDict = collections.OrderedDict()
         self.request_sizes: dict = {}
         self.requests_dropped = 0
+        self.fetches_started: dict = {}
+        self.fetch_loaders: dict = {}
+        self.fetches_busy_until = 0.0
         self.runtime_on = False
         self.network_on = False
         self.input = Input(self)
@@ -157,6 +168,8 @@ class Page:
         self.dropped: set = set()
         self.crashed = False
         self.needs_enable = False
+        self.awake = False
+        self.unanswered_at = 0.0
 
     async def attach(self, browser):
         self.browser = browser
@@ -197,6 +210,8 @@ class Page:
             await self.enable_network()
         if self.needs_restore:
             await self.restore_setup()
+        if self.awake or self.target_id in self.state.opened:
+            await self.keep_awake()
         viewport = None
         try:
             metrics = await self.send("Page.getLayoutMetrics")
@@ -206,6 +221,31 @@ class Page:
             pass
         self.input.bind(viewport)
         self.needs_enable = False
+
+    async def still_busy(self, method: str):
+        from ardia_cli import command_metrics
+
+        try:
+            await self.browser.send("Runtime.evaluate", {"expression": "1", "returnByValue": True}, self.session_id, BUSY_PROBE)
+        except CdpTimeout:
+            command_metrics.flag("page_busy_fast_fail", True)
+            raise PageBusy(method, BUSY_PROBE, BUSY_WHY.format(probe=BUSY_PROBE)) from None
+        except BrowseError:
+            pass
+        self.unanswered_at = 0.0
+
+    async def keep_awake(self):
+        from ardia_cli import command_metrics
+
+        endpoint = self.state.endpoint
+        if endpoint is None or not endpoint.explicit:
+            return
+        try:
+            await self.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        except BrowseError:
+            return
+        self.awake = True
+        command_metrics.flag("tab_kept_awake", True)
 
     async def restore_setup(self):
         from ardia_cli import command_metrics
@@ -306,6 +346,8 @@ class Page:
             raise BrowseError(DETACHED, code="tab_detached")
         if self.crashed and method not in CRASH_SAFE:
             raise BrowseError(CRASHED, code="tab_crashed")
+        if self.unanswered_at and time.monotonic() - self.unanswered_at < BUSY_MEMORY:
+            await self.still_busy(method)
         call = asyncio.ensure_future(self.browser.send(method, params, self.session_id, timeout))
         self.calls.add(call)
         try:
@@ -319,9 +361,10 @@ class Page:
                 raise BrowseError(CRASHED, code="tab_crashed") from None
             raise BrowseError(DETACHED, code="tab_detached") from None
         except CdpTimeout:
+            self.unanswered_at = time.monotonic()
             if input_event or mutation or is_mutation(method):
                 raise OutcomeUnknown(f"`{method}`", f"Ardia didn't answer {method} in {timeout:g}s after it was sent") from None
-            raise
+            raise PageBusy(method, timeout, BUSY_WHY.format(probe=BUSY_PROBE)) from None
         finally:
             self.calls.discard(call)
             self.dropped.discard(call)
@@ -390,7 +433,9 @@ class Page:
             try:
                 result = await self.send("Runtime.callFunctionOn", params, timeout=timeout, mutation=not read)
             except CdpError as error:
-                if not any(marker in error.cdp_message for marker in STALE_CONTEXT):
+                if OTHER_WORLD in error.cdp_message and attempt == 0 and await self.rehome(args, context):
+                    continue
+                if OTHER_WORLD not in error.cdp_message and not any(marker in error.cdp_message for marker in STALE_CONTEXT):
                     raise
                 self.worlds.pop(frame or self.main_frame, None)
                 if read and attempt == 0 and not any(isinstance(a, Element) for a in args):
@@ -406,6 +451,24 @@ class Page:
             remote = result.get("result") or {}
             return remote.get("value") if by_value else remote
         raise BrowseError("the page navigated while reading it; try again", code="page_navigated")
+
+    async def rehome(self, args, context) -> bool:
+        from ardia_cli import command_metrics
+
+        elements = [arg for arg in args if isinstance(arg, Element)]
+        if not elements:
+            return False
+        for element in elements:
+            try:
+                result = await self.send("DOM.resolveNode", {"backendNodeId": element.backend_id, "executionContextId": context})
+            except CdpError:
+                return False
+            remote = result.get("object") or {}
+            if "objectId" not in remote:
+                return False
+            element.object_id = remote["objectId"]
+        command_metrics.flag("element_rehomed", True)
+        return True
 
     async def element_from(self, remote: dict, frame: str, label: str) -> Element | None:
         if not remote or remote.get("subtype") == "null" or remote.get("type") == "undefined" or "objectId" not in remote:
@@ -574,6 +637,7 @@ class Page:
         request_id = params.get("requestId")
         if not request_id:
             return
+        self.track_fetch(method, request_id, params)
         if method == "Network.requestWillBeSent":
             request = params.get("request") or {}
             record = self.requests.get(request_id)
@@ -616,6 +680,25 @@ class Page:
                 record["failed"] = clip(params.get("errorText") or "failed", 1024)
                 record["finished"] = params.get("timestamp")
         self.account_request(request_id)
+
+    def track_fetch(self, method: str, request_id: str, params: dict):
+        if method == "Network.requestWillBeSent":
+            if params.get("type") in ("XHR", "Fetch") and request_id not in self.fetches_started:
+                now = time.monotonic()
+                if len(self.fetches_started) >= FETCHES_TRACKED:
+                    self.fetches_started = {key: started for key, started in self.fetches_started.items() if now - started < FETCH_FRESH}
+                    self.fetch_loaders = {key: self.fetch_loaders[key] for key in self.fetches_started if key in self.fetch_loaders}
+                if len(self.fetches_started) >= FETCHES_TRACKED:
+                    oldest_id = next(iter(self.fetches_started))
+                    oldest = self.fetches_started.pop(oldest_id)
+                    self.fetch_loaders.pop(oldest_id, None)
+                    self.fetches_busy_until = max(self.fetches_busy_until, oldest + FETCH_FRESH)
+                self.fetches_started[request_id] = now
+                if params.get("loaderId"):
+                    self.fetch_loaders[request_id] = params["loaderId"]
+        elif method in ("Network.loadingFinished", "Network.loadingFailed"):
+            self.fetches_started.pop(request_id, None)
+            self.fetch_loaders.pop(request_id, None)
 
     def account_request(self, request_id):
         record = self.requests.get(request_id)

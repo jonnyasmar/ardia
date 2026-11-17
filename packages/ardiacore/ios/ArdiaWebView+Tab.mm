@@ -1,6 +1,5 @@
 #import "ArdiaWebViewInternal.h"
 #import "ArdiaEarlyWindow.h"
-#import "ArdiaFairPlay.h"
 
 #import <objc/runtime.h>
 
@@ -108,7 +107,10 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
   if (NSView *devtools = tab.devToolsView) [self devToolsChanged:devtools];
   [self layoutPage];
   [self applyPainting];
-  if (!shownEarly && (_life.creatingURL.length || tab.loading)) [self holdLittlePage];
+  const BOOL created = _firstPaint.created;
+  if (created) _firstPaint.settled = NO;
+  if (!shownEarly && (created || _life.creatingURL.length || tab.loading)) [self holdPageUntilPainted:created];
+  _firstPaint.created = created && !shownEarly && !_firstPaint.held && !_visible && !_reveal.active;
   if (_muted) tab.muted = YES;
   if (_pageBackgroundColor) tab.pageBackgroundColor = _pageBackgroundColor;
   if (_contentsBackgroundColor) tab.contentsBackgroundColor = _contentsBackgroundColor;
@@ -127,12 +129,14 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
   if (_tabIndex >= 0) [self placeTab];
   if (ArdiaWindowController *controller = self.controller)
     [ArdiaTabStrip changedInWindow:controller profile:tab.profile cause:NSNull.null];
+  [self settleFirstShowFocus];
 }
 
 - (void)detach {
   if (!_tab) return;
   if (TraceVisibility()) NSLog(@"[ardiacore-vis] %@ detach tab=%d", _transferKey, (int)_tab.tabId);
-  [self revealLittlePage:NO];
+  [self showHeldPage:ArdiaHeldPageEnd::Detached];
+  _firstPaint.created = NO;
   if (_tab.delegate == self) _tab.delegate = nil;
   [ArdiaTabRegistry setView:nil forTab:_tab];
   [ArdiaWebView noteShown:_tab];
@@ -320,6 +324,7 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
   if (tab.profile.offTheRecord) payload[@"profile"] = ardia_host::OriginalProfileNameOf(tab.profile);
   if (clicked) payload[@"point"] = RecentClickPoint(self);
   if (linkWait) payload[@"linkWait"] = linkWait;
+  if ([disposition isEqualToString:@"window"] && TakeShiftClick(self)) payload[@"shiftClick"] = @YES;
   if (objc_getAssociatedObject(tab, &kPopupTabKey)) {
     objc_setAssociatedObject(tab, &kPopupTabKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     payload[@"popup"] = @YES;
@@ -370,7 +375,6 @@ const CFTimeInterval kHiddenNewTabLinkSeconds = 1;
 
 - (void)tabWillClose:(ArdiaCoreTab *)tab {
   [ArdiaEarlyWindow dropPage:tab];
-  [ArdiaFairPlay pageGoneFromTab:tab];
   if (_life.closed() || tab != _tab) return;
   [self detach];
   [self emit:@"windowClose" payload:@{}];

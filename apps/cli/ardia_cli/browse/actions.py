@@ -376,7 +376,12 @@ async def restore_metrics(page):
 
 async def scroll_into_view(page, element, humanize: bool):
     if not humanize or element.frame != page.main_frame:
-        await page.send("DOM.scrollIntoViewIfNeeded", {"backendNodeId": element.backend_id})
+        try:
+            await page.send("DOM.scrollIntoViewIfNeeded", {"backendNodeId": element.backend_id})
+        except CdpError as error:
+            if "layout object" not in error.cdp_message:
+                raise
+            raise BrowseError(f"Element {element.label} has no visible box (hidden or zero-size)", code="not_visible") from None
         return
     for _ in range(5):
         r = await rect(page, element)
@@ -438,6 +443,15 @@ async def target_point(page, element, humanize: bool, check_cover: bool = True):
             tried.add(f"consent {cover}")
             if await dismissed_consent(page, element, cx - ox, cy - oy):
                 continue
+            if CONSENT_NAMES.search(cover) and "consent again" not in tried:
+                tried.add("consent again")
+                await asyncio.sleep(CONSENT_FADE)
+                if await dismissed_consent(page, element, cx - ox, cy - oy):
+                    continue
+        if MENU_NAMES.search(cover) and "escape" not in tried:
+            tried.add("escape")
+            if await closed_menu(page, cover):
+                continue
         if "center" not in tried:
             tried.add("center")
             if await centered(page, element):
@@ -462,12 +476,52 @@ async def target_point(page, element, humanize: bool, check_cover: bool = True):
                 data={"point": [cx, cy], "viewport": [vp["width"], vp["height"]]}, code="outside_viewport",
             )
         if cover:
+            closer = await close_control(page, element, cx - ox, cy - oy)
+            way = f"; its close control is {closer} (`click {closer.split()[0]}`), then retry" if closer else "; interact with that element first, snapshot again, then retry"
             raise BrowseError(
-                f"Element {element.label} is covered by {cover}; interact with that element first, snapshot again, then retry",
-                data={"coveredBy": cover},
+                f"Element {element.label} is covered by {cover}{way}",
+                data={"coveredBy": cover, "closeRef": closer.split()[0] if closer else None},
                 code="covered",
             )
     return cx, cy, info
+
+
+CLOSE_CONTROL = r"""(x, y) => {
+  const hit = document.elementFromPoint(x, y);
+  if (!hit) return [];
+  let layer = null;
+  for (let el = hit; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    const style = getComputedStyle(el);
+    if (style.position === "fixed" || style.position === "sticky" || el.getAttribute("role") === "dialog" || el.getAttribute("aria-modal") === "true" || el.tagName === "DIALOG") layer = el;
+  }
+  if (!layer) return [];
+  const closeName = /^(close|dismiss|close (dialog|modal|popup|window|banner)|no,? thanks?|no thank you|not now|maybe later|skip|×|✕|✖|x)$/i;
+  for (const control of layer.querySelectorAll("button, [role=button], a, [aria-label]")) {
+    if (!ardiaBrowse.visible(control)) continue;
+    const shown = ((control.innerText || control.value || "").trim()).replace(/\s+/g, " ");
+    const label = (control.getAttribute("aria-label") || control.getAttribute("title") || "").trim();
+    if (closeName.test(shown) || (shown.length <= 2 && closeName.test(label))) return [control];
+  }
+  return [];
+}"""
+
+
+async def close_control(page, element, x, y) -> str | None:
+    from ardia_cli import command_metrics
+
+    try:
+        remote = await page.call(CLOSE_CONTROL, x, y, frame=element.frame, by_value=False, read=True)
+        found = await page.elements_from(remote, element.frame, "close control", limit=1)
+    except BrowseError:
+        return None
+    if not found:
+        return None
+    try:
+        name = await page.call("(el) => ((el.innerText || '').trim() || el.getAttribute('aria-label') || el.getAttribute('title') || 'close').replace(/\\s+/g, ' ').slice(0, 40)", found[0], frame=element.frame, read=True)
+    except BrowseError:
+        name = "close"
+    command_metrics.flag("covered_close_ref", True)
+    return f"@{page.state.ref_for_node(page, element.frame, found[0].backend_id)} \"{name}\""
 
 
 async def dismissed_consent(page, element, x, y) -> bool:
@@ -479,10 +533,24 @@ async def dismissed_consent(page, element, x, y) -> bool:
         return False
     if not done:
         return False
-    popup = done.get("kind") == "popup"
-    command_metrics.flag("popup_dismissed" if popup else "consent_dismissed", True)
-    what = "A signup popup" if popup else "A consent banner"
+    kind = done.get("kind")
+    command_metrics.flag({"popup": "popup_dismissed", "modal": "modal_dismissed"}.get(kind, "consent_dismissed"), True)
+    what = {"popup": "A signup popup", "modal": "A popup"}.get(kind, "A consent banner")
     page.state.consent_dismissed = f'{what} was in the way: {done["layer"]} covered {element.label}, so its "{done["name"]}" button was clicked ({done["choice"]})'
+    await asyncio.sleep(CONSENT_SETTLE)
+    return True
+
+
+async def closed_menu(page, cover: str) -> bool:
+    from ardia_cli import command_metrics
+
+    try:
+        for kind in ("keyDown", "keyUp"):
+            await page.send("Input.dispatchKeyEvent", {"type": kind, "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27}, input_event=True)
+    except BrowseError:
+        return False
+    command_metrics.flag("menu_closed_for_click", True)
+    page.state.consent_dismissed = f"An open menu or list ({cover}) was in the way, so Escape was pressed to close it before the click"
     await asyncio.sleep(CONSENT_SETTLE)
     return True
 
@@ -532,11 +600,17 @@ async def click(page, element, humanize: bool, count: int = 1, button: str = "le
     except BrowseError as error:
         if error.code == "not_visible":
             stand_in = await visible_label(page, element)
+            if stand_in is not None:
+                command_metrics.flag("clicked_label_of_hidden_input", True)
+                await click(page, stand_in, humanize, count, button)
+                page.state.click_note = f"{element.label} is hidden and drawn by its label, so the click went to the label"
+                return
+            stand_in = await visible_content(page, element)
             if stand_in is None:
                 raise
-            command_metrics.flag("clicked_label_of_hidden_input", True)
+            command_metrics.flag("clicked_visible_content", True)
             await click(page, stand_in, humanize, count, button)
-            page.state.click_note = f"{element.label} is hidden and drawn by its label, so the click went to the label"
+            page.state.click_note = f"{element.label} has no box of its own, so the click went to its visible content"
             return
         if error.code != "outside_viewport" or count != 1 or button != "left":
             raise
@@ -556,6 +630,11 @@ async def click(page, element, humanize: bool, count: int = 1, button: str = "le
 async def visible_label(page, element):
     remote = await page.call(VISIBLE_LABEL, element, frame=element.frame, by_value=False)
     return await page.element_from(remote, element.frame, f"the label of {element.label}")
+
+
+async def visible_content(page, element):
+    remote = await page.call(VISIBLE_CONTENT, element, frame=element.frame, by_value=False)
+    return await page.element_from(remote, element.frame, f"the visible content of {element.label}")
 
 
 async def scroll_lock(page, element) -> str | None:
@@ -617,6 +696,9 @@ BOX_SETTLE_POLL = 0.05
 BOX_SETTLE_LIMIT = 1.0
 CENTER = "(el) => { const before = el.getBoundingClientRect(); el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); const after = el.getBoundingClientRect(); return Math.abs(after.top - before.top) + Math.abs(after.left - before.left) > 1; }"
 CONSENT_SETTLE = 0.5
+CONSENT_FADE = 0.8
+CONSENT_NAMES = re.compile(r"onetrust|consent|cookie|\bot-", re.I)
+MENU_NAMES = re.compile(r"^<?(ul|li)\b|menu|dropdown|listbox|popover|submenu|suggest|autocomplete", re.I)
 VISIBLE_LABEL = """(el) => {
   if (!(el instanceof HTMLInputElement) || !/^(checkbox|radio)$/.test(el.type)) return null;
   const shown = (node) => {
@@ -627,6 +709,19 @@ VISIBLE_LABEL = """(el) => {
   const wrapping = el.closest("label");
   if (wrapping && !labels.includes(wrapping)) labels.push(wrapping);
   return labels.find(shown) || null;
+}"""
+VISIBLE_CONTENT = """(el) => {
+  const box = el.getBoundingClientRect();
+  if (box.width >= 2 && box.height >= 2) return null;
+  const shown = (node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.width >= 2 && rect.height >= 2 && (!node.checkVisibility || node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+  };
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT);
+  for (let node = walker.nextNode(), seen = 0; node && seen < 400; node = walker.nextNode(), seen++) {
+    if (shown(node)) return node;
+  }
+  return null;
 }"""
 SCROLL_LOCK = """(el) => {
   const shown = (node) => node.checkVisibility ? node.checkVisibility({ checkVisibilityCSS: true }) : !!node.offsetParent;
@@ -1398,6 +1493,13 @@ async def scroll(page, direction: str, amount: float, humanize: bool, selector_e
         ox, oy = await frame_offset(page, selector_element.frame)
         point = (ox + r["x"] + r["width"] * random.uniform(0.35, 0.65), oy + r["y"] + r["height"] * random.uniform(0.35, 0.65))
         frame = selector_element.frame
-    needs = {} if distance == 0 or not await page.takes_input() else {"wheel": 1}
+    else:
+        vp = await viewport(page)
+        x, y = page.input.mouse._position
+        if not (8 <= x <= vp["width"] - 8 and 8 <= y <= vp["height"] - 8):
+            x, y = vp["width"] * random.uniform(0.35, 0.65), vp["height"] * random.uniform(0.35, 0.65)
+        point = (x, y)
+    landed_inside = frame is None and distance != 0 and await over_frame(page, *point)
+    needs = {} if distance == 0 or landed_inside or not await page.takes_input() else {"wheel": 1}
     await expect_input(page, frame, lambda: page.input.gesture("scroll", lambda: scroll_wheel(page, distance, vertical, humanize, point, frame, selector_element), allow_hidden=True),
                        needs, "The scroll")

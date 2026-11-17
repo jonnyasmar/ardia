@@ -47,6 +47,7 @@ export const PROTECTED_VIDEO_SITES: readonly string[] = [
   "hulu.com",
   "tv.apple.com",
   "music.apple.com",
+  "open.spotify.com",
   "peacocktv.com",
   "paramountplus.com",
   "crunchyroll.com",
@@ -56,8 +57,6 @@ export const PROTECTED_VIDEO_SITES: readonly string[] = [
   "tv.youtube.com",
 ];
 
-export const FAIRPLAY_IN_CHROMIUM_ORIGINS: readonly string[] = ["https://open.spotify.com"];
-
 export function protectedVideoSite(url: string | undefined | null): boolean {
   const site = siteOf(url);
   if (!site?.startsWith("https://")) return false;
@@ -65,13 +64,8 @@ export function protectedVideoSite(url: string | undefined | null): boolean {
   return PROTECTED_VIDEO_SITES.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
-export const fairPlaySite = (url: string | undefined | null) => FAIRPLAY_IN_CHROMIUM_ORIGINS.includes(siteOf(url) ?? "");
-
-const fairPlayGoesToWebKit = (s: Pick<BrowserState, "settings">, url: string | undefined | null) =>
-  s.settings.fairPlayInChromium !== true && fairPlaySite(url);
-
 export const builtInEngine = (s: Pick<BrowserState, "settings">, url: string | undefined | null): PageEngine | undefined =>
-  PLATFORM_FEATURES.webKit && s.settings.protectedVideoInWebKit === true && (protectedVideoSite(url) || fairPlayGoesToWebKit(s, url)) ? "webkit" : undefined;
+  PLATFORM_FEATURES.webKit && s.settings.protectedVideoInWebKit === true && protectedVideoSite(url) ? "webkit" : undefined;
 
 export const chosenEngine = (s: Pick<BrowserState, "settings">, url: string | undefined | null): PageEngine | undefined => ruleFor(s, url) ?? builtInEngine(s, url);
 

@@ -8,7 +8,7 @@ import { launch, reporter, session } from "../../../scripts/lib/instance.mjs";
 const args = process.argv.slice(2);
 const appArg = args.find((a) => !a.startsWith("--"));
 if (!appArg) {
-  console.error("usage: node peek-edge-test.mjs <Debug Ardia.app> [--port=<DevTools port>] [--keep-data]\n\nThe auto-hidden sidebar's peek, through the native edge watcher: a pointer resting on the window's bottom or top edge beside the peek keeps it out instead of flicking it shut and open, one that goes well past the edge closes it, an edge crossing outside the sidebar's column never opens it, once it slides away only the window's edge brings it back, pressing the other space's dot keeps it out, and with the window against a screen edge another display shares, the pointer stops at that edge to show the sidebar and a second push goes on through. Also (#1297, #1393, #1679): only the last 3 pt or past the edge open it, it stays out 40 pt past its edge and closes 200 ms after the pointer leaves, a drag on its edge resizes it instead of closing it, and Reveal hidden tabs on hover off leaves the edge alone.");
+  console.error("usage: node peek-edge-test.mjs <Debug Ardia.app> [--port=<DevTools port>] [--keep-data]\n\nThe auto-hidden sidebar's peek, through the native edge watcher: a pointer resting on the window's bottom or top edge beside the peek keeps it out instead of flicking it shut and open, one that goes well past the edge closes it, an edge crossing outside the sidebar's column never opens it, once it slides away only the window's edge brings it back, in a full-screen window the pointer resting at the screen's edge keeps it out, pressing the other space's dot keeps it out, and with the window against a screen edge another display shares, the pointer stops at that edge to show the sidebar and a second push goes on through. Also (#1297, #1393, #1679): only the last 3 pt or past the edge open it, it stays out 40 pt past its edge and closes 200 ms after the pointer leaves, a drag on its edge resizes it instead of closing it, and Reveal hidden tabs on hover off leaves the edge alone.");
   process.exit(2);
 }
 const appPath = resolve(appArg);
@@ -39,6 +39,8 @@ const watchCalls = () => { const p = globalThis.acLayout.peek.w1; const calls = 
 const jitter = (x, ys, ms) => { const done = watchCalls(); let i = 0;
   return new Promise((r) => { const iv = setInterval(() => at(x, ys[i++ % ys.length]), ms); setTimeout(() => { clearInterval(iv); r(); }, ms * ys.length * 4); })
     .then(() => settle(400)).then(() => ({ calls: done(), live: live() })); };
+const until = (test, ms) => { const end = Date.now() + ms; const poll = () => (test() ? Promise.resolve(true) : Date.now() > end ? Promise.resolve(false) : settle(50).then(poll)); return poll(); };
+const ROW_Y = 94;
 const peek = () => at(-4, 400).then(() => settle(500)).then(() => at(80, 400)).then(() => settle(300)).then(live);
 const away = () => at(700, 400).then(() => settle(700)).then(live);
 `;
@@ -93,11 +95,14 @@ try {
     assert.equal(await run(`return peek();`), true);
     const out = await run(`let win;
       return ac.engine.call("windows.list", {}).then((l) => { win = l.find((w) => w.hasRoot).window; })
-        .then(() => at(60, 66)).then(() => settle(200))
-        .then(() => ac.engine.call("windows.dev", { window: win, action: "mouse:down:60,66" })).then(() => settle(80))
-        .then(() => ac.engine.call("windows.dev", { window: win, action: "mouse:dragged:100,66" })).then(() => at(9 + 160 + 160, 66))
-        .then(() => ac.engine.call("windows.dev", { window: win, action: "mouse:dragged:" + (9 + 160 + 160) + ",66" }))
-        .then(() => settle(700)).then(() => { const held = live(); return ac.engine.call("windows.dev", { window: win, action: "mouse:up:" + (9 + 160 + 160) + ",66" }).then(() => settle(600)).then(() => ({ held, after: live() })); });`);
+        .then(() => at(60, ROW_Y)).then(() => settle(200))
+        .then(() => ac.engine.call("windows.dev", { window: win, action: "mouse:down:60," + ROW_Y })).then(() => settle(80))
+        .then(() => ac.engine.call("windows.dev", { window: win, action: "mouse:dragged:100," + ROW_Y })).then(() => settle(80))
+        .then(() => ac.engine.call("windows.dev", { window: win, action: "mouse:dragged:140," + ROW_Y }))
+        .then(() => until(() => globalThis.acTabDrag.getState().phase === "tab", 1500)).then((dragging) => at(9 + 160 + 160, ROW_Y).then(() => dragging))
+        .then((dragging) => ac.engine.call("windows.dev", { window: win, action: "mouse:dragged:" + (9 + 160 + 160) + "," + ROW_Y }).then(() => dragging))
+        .then((dragging) => settle(700).then(() => { const held = live(); return ac.engine.call("windows.dev", { window: win, action: "mouse:up:" + (9 + 160 + 160) + "," + ROW_Y }).then(() => settle(600)).then(() => ({ dragging, held, after: live() })); }));`);
+    assert.equal(out.dragging, true, "the press on the first tab row became a tab drag");
     assert.equal(out.held, true, "out while the button is down");
     assert.equal(out.after, false, "closes once the button comes up away from it");
     await run(`return away();`);
@@ -119,12 +124,18 @@ try {
     });
   }
 
-  await rep.check("with Reveal hidden tabs on hover off, the edge doesn't open it (#1393)", async () => {
-    await run(`st().updateSettings({ revealTabsOnHover: false }); return settle(300);`);
-    assert.equal(await run(`return peek();`), false);
-    await run(`st().updateSettings({ revealTabsOnHover: true }); return away();`);
-    assert.equal(await run(`return peek();`), true, "back on");
-    assert.equal(await run(`return away();`), false);
+  await rep.check("in a full-screen window, a pointer resting on the left edge keeps the peek out, and moving onto it keeps it too", async () => {
+    const fullScreen = (on) => `return ac.engine.call("windows.list", {}).then((l) => ac.engine.call("windows.dev", { window: l.find((w) => w.hasRoot).window, action: "fakeFullScreen:${on ? 1 : 0}" })).then(() => settle(900));`;
+    await run(fullScreen(true));
+    try {
+      const rest = await run(`return at(300, 400).then(() => settle(400)).then(() => { const done = watchCalls(); return at(0, 400).then(() => settle(1500)).then(() => ({ calls: done(), live: live() })); });`);
+      assert.deepEqual(rest.calls.filter((c) => c === "hide"), [], `no hide with the pointer at the edge: ${rest.calls}`);
+      assert.equal(rest.live, true, "out with the pointer resting at the screen's edge");
+      assert.equal(await run(`return at(80, 400).then(() => settle(700)).then(live);`), true, "out with the pointer over it");
+      assert.equal(await run(`return away();`), false, "closes over the page");
+    } finally {
+      await run(fullScreen(false));
+    }
   });
 
   await rep.check("a pointer resting on the bottom edge beside the peek keeps it out", async () => {

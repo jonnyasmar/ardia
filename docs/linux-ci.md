@@ -36,8 +36,16 @@ Hosted CI never runs `gclient sync`, GN or a Chromium build.
   points them elsewhere. The engines published earlier on the contributor fork aren't used.
 - **What it ships.** The allowlist ships only what Chromium loads at runtime. It leaves out `.so.TOC` files, the mock
   Vulkan driver, the Vulkan validation layer and `locales/*.pak.info`.
-- **Stripping.** The publisher strips a staging copy; `symbol_level=0` builds have no debug symbols to keep. `chrome`
-  shrinks from about 535 MB to about 300 MB, and the archive is about 110 MB.
+- **Stripping.** The publisher strips a staging copy. `chrome` shrinks from about 535 MB to about 300 MB, and the
+  archive is about 110 MB.
+- **Symbols.** Before stripping, the publisher keeps what each stripped file loses (`objcopy --only-keep-debug`) in
+  `ArdiaCore-<key12>-linux-x64-symbols.tar.xz`, with its own `.sha256`, uploaded to the same prerelease. It holds
+  `ardiacore-linux-x64-symbols/.build-id/<2>/<rest>.debug` per file, the layout gdb and debuginfod read, and a
+  `symbols.json` naming each file's build ID. A `symbol_level=0` build has no debug info, so this is the symbol
+  table: function names, no lines. Crash reports name `chrome` by its build ID (`crash_images`) and give each frame as
+  an offset; [`scripts/linux/symbolize.py`](../scripts/linux/symbolize.py) names them:
+  `scripts/linux/symbolize.py --symbols ArdiaCore-<key12>-linux-x64-symbols.tar.xz --build-id <id> <offset>...`
+  (crashing frame first; the others are return addresses). The fetcher never downloads the symbols.
 - **Source commit.** The publisher doesn't trust `repo.commit` alone. It computes the engine key of the source copy the
   way `engine/engine-key.sh` does (one tree per key path, then one hash) and records `source_commit` only when that
   commit's key matches.
@@ -53,7 +61,7 @@ scripts/linux/publish-engine.sh \
 git add packages/ardiacore/prebuilt-engines-linux.tsv
 ```
 
-Without `--upload` it only writes the archive and prints its table row.
+Without `--upload` it only writes the archive and the symbols archive and prints the table row.
 
 The fetcher checks an archive in this order:
 
@@ -94,7 +102,8 @@ package job red after almost every merge.
   4. installs uv and builds the CLI with `apps/cli/scripts/build.sh <version> <dist> --platform linux-x64`; its Python
      and esbuild downloads are cached;
   5. prepares uBlock Origin with `scripts/linux/fetch-ubo.sh` (cached);
-  6. runs `scripts/linux/package.py --out <engine> --version <version> --cli <CLI tarball>`;
+  6. runs `scripts/linux/package.py --out <engine> --version <version> --cli <CLI tarball>`, which seeds the packaged
+     uBlock Origin by running the staged `chrome` once (`scripts/linux/ubo-seed.mjs`);
   7. runs the smoke gate, with `--allow-old-engine` when the engine is a nearest one;
   8. uploads the tarball, the CLI tarball, their SHA-256 files and `results.json` for seven days.
 

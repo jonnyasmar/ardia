@@ -1,3 +1,6 @@
+import { takePinnedFoldCounts } from "./pinnedFoldCounts";
+import { takeSidebarScrollCounts } from "./sidebarScrollCounts";
+
 const SLOW_FRAME_MS = 25;
 
 let resizes = 0;
@@ -30,7 +33,7 @@ export function noteSidebarResize(dragged: boolean) {
 }
 
 export function takeSidebarResizeCounts() {
-  const taken = { sidebar_resizes: resizes, sidebar_resize_frames: frames, sidebar_resize_slow_frames: slowFrames };
+  const taken = { sidebar_resizes: resizes, sidebar_resize_frames: frames, sidebar_resize_slow_frames: slowFrames, ...takeSidebarScrollCounts(), ...takePinnedFoldCounts() };
   resizes = frames = slowFrames = 0;
   return taken;
 }

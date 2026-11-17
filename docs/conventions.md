@@ -202,10 +202,10 @@ writeDocument(DOC, versionedJson(data, VERSION));
   depends on: a version says which shape to expect, not that the data is valid.
 - The field is `version`, except in `sync.json` (`v`) and `ardia-cli.json` (`schemaVersion`; its `version` is the
   installed CLI's version).
-- Covered: `session.json` (10), `downloads.json` (3), `launch-look.json` (2), `bookmarks-cache.json`, `telemetry.json`,
+- Covered: `session.json` (10), `downloads.json` (3), `launch-look.json` (2), `air-traffic.json` (2), `bookmarks-cache.json`, `telemetry.json`,
   `telemetry-queue.json`, `telemetry-daily.json`, `release-notes.json`, `onboarding.json`,
   `default-browser-offer.json`, `sync.json`, `sync-extensions.json`, `live.json`, `shared-folders.json`, `ardia-cli.json`,
-  `bangs-state.json`, `Scripts/status.json`, `air-traffic.json` and `link-sources.json` (all 1).
+  `bangs-state.json`, `Scripts/status.json` and `link-sources.json` (all 1).
 - Native code reads through `ArdiaSavedDocument` (packages/ardiacore/ios), with the same rules: `session.json` and
   `onboarding.json` (any version up to the one JS writes; a test pins each) and `launch-layout.json` (5, written and
   read by native code only, so any other version reads as nothing).
@@ -217,6 +217,14 @@ writeDocument(DOC, versionedJson(data, VERSION));
   (`dev-eval-result.json`, `layout-watch.json`), test fixtures (`calendar-fixture.json`), and the legacy
   `bookmarks.json` / `history.json`, which are migration inputs read once. The sync payload (log and snapshot files,
   `v: 1`) and `switches-cache.json` have their own versions.
+
+## Workspaces
+
+- Two pnpm workspaces. The root one is the Mac app and its packages (`apps/browser`, `packages/*` but
+  `packages/phone`), on the Mac's Expo and react-native-macos. `apps/phone` is its own workspace with `packages/phone`,
+  on the phone's Expo and React Native, with its own lockfile (docs/phone.md › Layout). They share only `@ardia/core`,
+  plain TypeScript linked into the phone.
+- A package belongs to one workspace, never both. Install each from its own root under `scripts/agent/locked pod`.
 
 ## Files
 

@@ -11,13 +11,14 @@ import { useHistoryAvailability } from "../../state/tabs/navigation";
 import { toolbarPalette, type ToolbarPalette } from "../ui/toolbarColors";
 import { Button, type ButtonHit, FadeLabel, radius, space, ToolbarRowContext, useHover } from "../ui";
 import { TOOLBAR_ROWS } from "../../lib/toolbarRow";
-import { setUrlAnchor, useSidebarCaptionRoom, watchSidebarControlsRow } from "../../state/windows/layout";
+import { setUrlAnchor, useSidebarCaptionRoom, watchSidebarFieldPlace } from "../../state/windows/layout";
 import { onInterfaceScaleSettled } from "../../state/settings/interfaceScale";
 import { useSidebarPart } from "../../state/sidebar/chrome";
 import { SIDEBAR_FIELD } from "./geometry";
 import { SIDEBAR_TYPE, TAB_ROW } from "./tokens";
 import { SidebarTextScope } from "./SidebarTextScope";
 import { noteEmptyTabSidebarExtensionPress } from "../../state/telemetry/usage";
+import { noteSidebarFieldRemeasure } from "../../state/telemetry/dockCounts";
 import { SidebarFieldFill } from "./SidebarField";
 import { useSidebarWidth, useSidebarWidthAs } from "../../state/sidebar/hooks";
 import { SidebarUrlField, useToolbarTab } from "../toolbar/Toolbar";
@@ -33,9 +34,10 @@ const { edge: EDGE } = HEADER_TOOLS;
 const LIGHTS_Y = ARC_LIGHTS_CENTER[1];
 const PLATE = 32;
 
-export function SidebarHeaderTools() {
+export function SidebarHeaderTools({ width: givenWidth }: { width?: number }) {
   const windowId = useWindowId();
-  const width = useSidebarWidth(windowId);
+  const sidebarWidth = useSidebarWidth(windowId, givenWidth === undefined);
+  const width = givenWidth ?? sidebarWidth;
   const tab = useToolbarTab(useActiveTabId());
   const palette = toolbarPalette(useTheme(), null);
   const toggleWanted = useSettings((st) => st.showSidebarButton !== false);
@@ -119,7 +121,14 @@ export function SidebarAddressRow({ top }: { top: number }) {
     });
   const remeasure = useRef(anchor);
   remeasure.current = anchor;
-  useEffect(() => watchSidebarControlsRow(windowId, () => requestAnimationFrame(() => remeasure.current())), [windowId]);
+  useEffect(
+    () =>
+      watchSidebarFieldPlace(windowId, () => {
+        noteSidebarFieldRemeasure();
+        requestAnimationFrame(() => remeasure.current());
+      }),
+    [windowId],
+  );
   useEffect(() => onInterfaceScaleSettled(() => remeasure.current()), [windowId]);
 
   return (

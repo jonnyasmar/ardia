@@ -373,12 +373,30 @@ async def start(page, handle: str, source: str, state: str = "{}"):
     await control(page, handle, "function (source, offset) { return this.start(source, offset); }", code, offset)
 
 
+def split_command_line(argv: list[str]) -> list[str]:
+    import shlex
+
+    from ardia_cli.browse.commands import ALIASES, COMMANDS
+
+    if len(argv) != 1 or not argv[0].strip() or argv[0].split()[0] == argv[0]:
+        return argv
+    try:
+        words = shlex.split(argv[0])
+    except ValueError:
+        return argv
+    if not words or ALIASES.get(words[0], words[0]) not in COMMANDS:
+        return argv
+    command_metrics.flag("script_command_line_split", True)
+    return words
+
+
 async def answer_call(ctx, argv) -> dict:
     from ardia_cli.browse.commands import ALIASES, Ctx
     from ardia_cli.browse.daemon import run_one
 
     if not isinstance(argv, list) or not argv or not all(isinstance(word, str) for word in argv):
         return {"ok": False, "error": "browse() takes a command and its arguments as strings", "code": "usage"}
+    argv = split_command_line(argv)
     name = ALIASES.get(argv[0], argv[0])
     if name == "batch":
         return {"ok": False, "error": "batch can't run inside a script; loop in the script instead", "code": "usage"}
@@ -404,6 +422,8 @@ async def drive(ctx, page, handle: str, source: str, current: dict, done: list |
         message = await control(page, handle, "function () { return this.next(); }", timeout=MAX_TIMEOUT + 30)
         if message.get("kind") != "request":
             return message
+        if isinstance(message.get("argv"), list) and all(isinstance(word, str) for word in message["argv"]):
+            message["argv"] = split_command_line(message["argv"])
         current.clear()
         current.update(message)
         if message.get("type") == "sleep":
@@ -419,7 +439,18 @@ async def drive(ctx, page, handle: str, source: str, current: dict, done: list |
         await control(page, handle, "function (id, answer) { return this.reply(id, answer); }", message["id"], answer)
 
 
-def timed_out(seconds: float, current: dict, source: str, logs: list[str], kept: str = "", done: list | None = None) -> BrowseError:
+STATE_PREVIEW_CHARS = 1500
+
+
+def kept_preview(state_text) -> str:
+    if not isinstance(state_text, str) or not state_text.strip() or state_text.strip() == "{}":
+        return ""
+    if len(state_text) <= STATE_PREVIEW_CHARS:
+        return state_text
+    return f"{state_text[:STATE_PREVIEW_CHARS]}… ({len(state_text):,} characters in all; `ardia browse script 'return state' --out <file>` saves it)"
+
+
+def timed_out(seconds: float, current: dict, source: str, logs: list[str], kept: str = "", done: list | None = None, state_text: str | None = None) -> BrowseError:
     where = ""
     if current.get("argv"):
         where = f", in `{show_argv(current['argv'])}`"
@@ -435,6 +466,10 @@ def timed_out(seconds: float, current: dict, source: str, logs: list[str], kept:
     message = f"The script timed out after {seconds:g}s{where}{unknown}. Give it longer with --timeout 3m (at most 10m), or do less per run"
     if kept:
         message += f". What it kept in state survives for the next script: {kept}"
+        preview = kept_preview(state_text)
+        if preview:
+            command_metrics.flag("script_timeout_state_shown", True)
+            message += f". So far: {preview}"
     else:
         message += ". Nothing it gathered was kept: push results into `state` as you go (state.rows = [...state.rows || [], row]) so the next run picks up where this one stopped"
     opened = sum(1 for name in (done or []) if ALIASES.get(name, name) == "open") + (1 if name == "open" else 0)
@@ -468,7 +503,7 @@ async def run(ctx, source: str, seconds: float):
         except asyncio.TimeoutError:
             stopped = await stop_worker(page, handle)
             kept = keep_state(ctx.state, stopped.get("state"))
-            raise timed_out(seconds, current, source, list(stopped.get("logs") or []), kept, done) from None
+            raise timed_out(seconds, current, source, list(stopped.get("logs") or []), kept, done, stopped.get("state")) from None
         except asyncio.CancelledError:
             stopped = await stop_worker(page, handle)
             if keep_state(ctx.state, stopped.get("state")):
