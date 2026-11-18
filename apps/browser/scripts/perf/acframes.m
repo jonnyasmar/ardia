@@ -512,6 +512,8 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
   NSInteger number = w.windowNumber;
   NSPoint pointerBefore = gPointer;
   NSInteger pointerWindowBefore = gPointerWindow;
+  BOOL takesFirstMouse = [handle respondsToSelector:@selector(setAcceptsFirstMouse:)];
+  BOOL firstMouseBefore = takesFirstMouse && [[handle valueForKey:@"acceptsFirstMouse"] boolValue];
   void (^post)(NSEventType, double) = ^(NSEventType type, double x) {
     NSPoint p = NSMakePoint(x, start.y);
     gPointer = [w convertPointToScreen:p];
@@ -528,6 +530,7 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
       OverridePointer();
       gPointer = [w convertPointToScreen:start];
       gPointerWindow = number;
+      if (takesFirstMouse) [handle setValue:@YES forKey:@"acceptsFirstMouse"];
       held = YES;
       post(NSEventTypeLeftMouseDown, start.x);
       step = 0;
@@ -539,6 +542,7 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
       post(NSEventTypeLeftMouseUp, pointerAt(step));
     } else if (after >= settle * 2) {
       RestoreClassMethod(NSEvent.class, @selector(pressedMouseButtons), buttons);
+      if (takesFirstMouse) [handle setValue:@(firstMouseBefore) forKey:@"acceptsFirstMouse"];
       gPointer = pointerBefore;
       gPointerWindow = pointerWindowBefore;
       *done = YES;
