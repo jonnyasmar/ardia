@@ -10,6 +10,7 @@ import { capture, isSharing, saveContext, useTelemetry } from "./client";
 import { formatRecentPages, readRecentPages, type RecentPage, type SavedContext } from "./savedContext";
 import { noteDragsEnded } from "./stuckDrags";
 import { noteWindowlessPages } from "./cliCounts";
+import { notePushMessaging } from "./pushMessagingCounts";
 import { mainProcessWork } from "./mainProcessWork";
 import { appInfo } from "./transport";
 import { readDocument } from "../../platform/documents";
@@ -85,6 +86,7 @@ export async function recordContext(): Promise<SavedContext | null> {
   void cliControlStatus().then((status) => {
     noteDragsEnded(status.dragsEnded);
     noteWindowlessPages(status.windowlessPages);
+    notePushMessaging(status.pushMessaging);
   }, () => {});
   const epoch = contextEpoch;
   const [sample, pressure] = await Promise.all([diagnosticsSample().catch(() => ({ footprintMB: undefined, freeDiskGB: undefined })), memoryPressure()]);

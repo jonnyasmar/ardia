@@ -12,6 +12,8 @@ export const PHRASES_ONLY_WITH: Readonly<Partial<Record<FeatureFlag, string>>> =
   launchLoad: ". Also at launch: the Mac's load average (one number, how busy it was) and whether the app was started as a login item",
   holdsColdPagesUntilPainted:
     ". Also how many times a tab that hadn't loaded yet kept the New Tab page's background until its page first drew, how many of those waits ended because the page drew, finished loading, was clicked or took over 4 seconds, and how long they took in all",
+  pushMessaging:
+    ". Also how many push subscriptions sites made through Google's push service, how many failed, how many were refused because Use Google services for push messaging was off, and how many push messages reached a site's service worker",
 };
 
 export const termRules = (terms: PlatformTerms): readonly { mac: RegExp; platform: string }[] => [

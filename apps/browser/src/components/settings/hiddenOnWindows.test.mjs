@@ -6,7 +6,7 @@ test("Windows hides the settings whose only effect is an engine call it doesn't 
   const windowsFeatures = source("../../lib/platformFeatures.windows.ts");
   const macFeatures = source("../../lib/platformFeatures.ts");
   const missing = JSON.parse(source("../../../../../packages/expo-windows/src/engine/domains/forwarded.json")).missing;
-  const flags = { passwordAutofillSwitch: [false, true], answersPermissionRequests: [false, true], ardiaCommand: [false, true] };
+  const flags = { passwordAutofillSwitch: [false, true], answersPermissionRequests: [false, true], ardiaCommand: [false, true], pushMessaging: [false, true] };
   for (const [flag, [onWindows, onMac]] of Object.entries(flags)) {
     assert.match(windowsFeatures, new RegExp(`${flag}: ${onWindows}\\b`), `Windows ${flag}`);
     assert.match(macFeatures, new RegExp(`${flag}: ${onMac}\\b`), `Mac ${flag}`);
@@ -20,7 +20,8 @@ test("Windows hides the settings whose only effect is an engine call it doesn't 
   rowShownBy("./rows/advancedRows.ts", "compactCliPill", "ardiaCommand");
   assert.match(source("../../state/site/siteControls.ts"), /offersSiteSetting = \(type: SiteSettingType\) => type !== "autoplay" \|\| PLATFORM_FEATURES\.blocksAutoplay;/);
   const sites = source("./panes/SiteSettings.tsx");
-  assert.match(sites, /\{\(PLATFORM_FEATURES\.blocksAutoplay \|\| PLATFORM_FEATURES\.answersPermissionRequests\) && \(\s*<>\s*<SectionHeader title="All sites"/);
+  assert.match(sites, /\{\(PLATFORM_FEATURES\.blocksAutoplay \|\| PLATFORM_FEATURES\.answersPermissionRequests \|\| PLATFORM_FEATURES\.pushMessaging\) && \(\s*<>\s*<SectionHeader title="All sites"/);
+  assert.match(sites, /\{PLATFORM_FEATURES\.pushMessaging \? \(/);
   assert.match(sites, /\{PLATFORM_FEATURES\.answersPermissionRequests \? \(/);
   assert.ok(missing.permissions.includes("resolve"));
   assert.doesNotMatch(source("./rows/tabRows.ts"), /popupsOpenAsTabs: \{[^}]*shown:/, "Windows opens pop-ups as tabs itself, so the row shows there");
