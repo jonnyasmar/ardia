@@ -28,6 +28,7 @@ import { DOCK_SHARE, DOCKED_ROW_PAD, GLOW_ROOM, pageLayout, tilesFitDock, type S
 import { PageRows } from "./PageRows";
 import { NewTabRow } from "./NewTabRow";
 import { SelectedRowPill, useSelectedRowAway } from "./SelectedRowPill";
+import { withOverscan, type ListViewport } from "./listViewport";
 
 const NONE: string[] = [];
 type PageGeometry = { scrollY: number; viewport: number; regions: SidebarGeometry["regions"] };
@@ -118,6 +119,9 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
   windowRef.current = windowId;
   const page = useRef<PageGeometry>({ scrollY: 0, viewport: 0, regions: { pinnedGroups: 0, list: 0 } }).current;
   const scrollView = useRef<ScrollView | null>(null);
+  const [listViewport] = useState<ListViewport>(() => ({
+    band: () => (page.viewport ? withOverscan(page.scrollY - LIST_PAD - page.regions.list, page.viewport) : null),
+  }));
   useLayoutEffect(() => {
     if (!current) return;
     onScrollView(scrollView.current);
@@ -227,6 +231,7 @@ export const SidebarPage = memo(function SidebarPage({ profileId, slot, paging, 
                           controller={liveDrag}
                           geometry={geometry}
                           regions={page.regions}
+                          viewport={listViewport}
                           onListHeight={reportList}
                         />
                         <ContextMenuArea style={{ flexGrow: 1, minHeight: inlineNewTab ? 24 : 0 }} onContextMenu={() => void openSidebarMenu(windowId)}>
