@@ -114,8 +114,9 @@ done < <(find "$app/Contents" -depth -not -path "*/Chromium Framework.framework/
   -o -type f \( -name "*.dylib" -o -path "*.framework/Versions/*/Autoupdate" \) \) -print0)
 
 fairplay="$app/Contents/Helpers/ArdiaFairPlay.app"
-[[ -d "$fairplay" ]] || die "no ArdiaFairPlay.app in the build"
-sign --options restrict,library,kill,runtime --entitlements "$ardiacore/fairplay/ArdiaFairPlay.entitlements" "$fairplay"
+if [[ -d "$fairplay" ]]; then
+  sign --options restrict,library,kill,runtime --entitlements "$ardiacore/fairplay/ArdiaFairPlay.entitlements" "$fairplay"
+fi
 
 entitlements="$out/app.entitlements"
 cp "$macos/Ardia-macOS/Ardia.entitlements" "$entitlements"
