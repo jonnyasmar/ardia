@@ -15,6 +15,7 @@
 # - No provisioning profile, so the keychain groups are left out: passkeys saved to the Chrome profile (Touch ID)
 #   aren't available. iCloud Keychain passwords and everything else work.
 # - The app it replaces moves to apps/browser/build-fork/previous/Ardia.app. Quit Ardia before installing.
+# - The build runs at nice 15 with 4 Xcode jobs so the Mac stays usable (FORK_NICE, FORK_JOBS override them).
 set -euo pipefail
 
 usage() { sed -n '4,5p' "$0" | sed 's/^# *//' >&2; exit 64; }
@@ -60,7 +61,7 @@ echo "==> Content blocker"
 
 echo "==> Build (Release, log: ${log#"$repo"/})"
 rm -rf "$out/Ardia.xcarchive"
-(cd "$repo/apps/browser" && "$repo/scripts/agent/locked" xcodebuild --wait 1800 -- xcodebuild -workspace macos/Ardia.xcworkspace -scheme Ardia-macOS \
+(cd "$repo/apps/browser" && "$repo/scripts/agent/locked" xcodebuild --wait 1800 -- nice -n "${FORK_NICE:-15}" xcodebuild -jobs "${FORK_JOBS:-4}" -workspace macos/Ardia.xcworkspace -scheme Ardia-macOS \
   -configuration Release -destination 'generic/platform=macOS' ARCHS=arm64 ARDIACORE_STAGE_DIR="$dd/ArdiaCoreFramework" \
   -derivedDataPath "$dd" -archivePath "$out/Ardia.xcarchive" archive) >>"$log" 2>&1 || {
   grep -E "error:|build commands failed" -A2 "$log" | grep -v MACOSX_DEPLOYMENT_TARGET | tail -20 >&2
