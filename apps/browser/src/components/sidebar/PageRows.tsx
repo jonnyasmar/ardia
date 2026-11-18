@@ -120,6 +120,7 @@ export function PageRows({ windowId, profileId, current, rows, lazy, offScreen, 
             controller?.regions.set("list", v);
           }}
           onLayout={(e) => void (regions.list = e.nativeEvent.layout.y)}
+          removeClippedSubviews
           style={{ gap: layout.rowGap }}
         >
           {newTabButtonAtTop && inlineNewTab ? <NewTabRow windowId={windowId} /> : null}

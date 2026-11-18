@@ -97,6 +97,30 @@ static void SwizzleUIManager(void) {
   });
 }
 
+static NSPoint gPointer;
+static NSInteger gPointerWindow;
+static NSHashTable<NSView *> *gEntered;
+static id gScrollWatch;
+
+static void OverridePointer(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    SEL location = @selector(mouseLocation), windowAt = @selector(windowNumberAtPoint:belowWindowWithWindowNumber:);
+    Swizzle(object_getClass(NSEvent.class), location, ^id(IMP orig) {
+      return ^NSPoint(id self) {
+        NSPoint real = ((NSPoint (*)(id, SEL))orig)(self, location);
+        return gPointerWindow ? gPointer : real;
+      };
+    });
+    Swizzle(object_getClass(NSWindow.class), windowAt, ^id(IMP orig) {
+      return ^NSInteger(id self, NSPoint point, NSInteger below) {
+        NSInteger real = ((NSInteger (*)(id, SEL, NSPoint, NSInteger))orig)(self, windowAt, point, below);
+        return gPointerWindow ? gPointerWindow : real;
+      };
+    });
+  });
+}
+
 static mach_port_t gMainThread, gJSThread;
 static double ThreadCpuMs(mach_port_t t) {
   if (!t) return -1;
@@ -301,6 +325,82 @@ static void FindJSThread(void) {
   };
 }
 
+- (void)enterAndLeaveAsAppKitDoes:(NSWindow *)window {
+  if (!gPointerWindow || window.windowNumber != gPointerWindow) return;
+  NSPoint at = [window convertPointFromScreen:gPointer];
+  SEL handler = NSSelectorFromString(@"onMouseEnter");
+  NSMutableArray<NSView *> *over = [NSMutableArray array];
+  for (NSView *v = [window.contentView.superview hitTest:at]; v; v = v.superview)
+    if ([v respondsToSelector:handler] && ((id (*)(id, SEL))objc_msgSend)(v, handler) != nil) [over addObject:v];
+  NSEvent * (^event)(NSEventType) = ^(NSEventType type) {
+    return [NSEvent enterExitEventWithType:type location:at modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+                              windowNumber:window.windowNumber context:nil eventNumber:0 trackingNumber:0 userData:NULL];
+  };
+  for (NSView *v in gEntered.allObjects) {
+    if ([over containsObject:v]) continue;
+    [gEntered removeObject:v];
+    [v mouseExited:event(NSEventTypeMouseExited)];
+  }
+  for (NSView *v in over.reverseObjectEnumerator) {
+    if ([gEntered containsObject:v]) continue;
+    [gEntered addObject:v];
+    [v mouseEntered:event(NSEventTypeMouseEntered)];
+  }
+}
+
+- (void)runPointer:(NSDictionary *)cmd id:(NSString *)cid {
+  NSScrollView *sv = [self tallestScrollView];
+  if (gScrollWatch) [NSNotificationCenter.defaultCenter removeObserver:gScrollWatch];
+  gScrollWatch = nil;
+  gEntered = [NSHashTable weakObjectsHashTable];
+  Class views = NSClassFromString(@"RCTView");
+  SEL hoverChanged = NSSelectorFromString(@"ardia_markHoverDirty");
+  void (^checkHover)(void) = ^{
+    if ([views respondsToSelector:hoverChanged]) ((void (*)(id, SEL))objc_msgSend)(views, hoverChanged);
+  };
+  if (![cmd[@"over"] isEqual:@"list"]) {
+    gPointerWindow = 0;
+    checkHover();
+    return [self answer:cid with:@{@"ok": @YES, @"over": @"real"}];
+  }
+  if (!sv.window) return [self answer:cid with:@{@"ok": @NO, @"error": @"no tall scroll view"}];
+  NSRect shown = [sv.window convertRectToScreen:[sv.contentView convertRect:sv.contentView.bounds toView:nil]];
+  OverridePointer();
+  gPointer = NSMakePoint(NSMidX(shown), NSMidY(shown));
+  gPointerWindow = sv.window.windowNumber;
+  checkHover();
+  __weak ACFramesProbe *weak = self;
+  __weak NSWindow *window = sv.window;
+  gScrollWatch = [NSNotificationCenter.defaultCenter addObserverForName:NSViewBoundsDidChangeNotification object:sv.contentView queue:nil
+                                                             usingBlock:^(NSNotification *note) { [weak enterAndLeaveAsAppKitDoes:window]; }];
+  CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
+  NSMutableArray<NSView *> *hoverable = [NSMutableArray array];
+  [self collectHoverViews:sv into:hoverable];
+  [self answer:cid with:@{@"ok": @YES, @"over": @"list", @"window": @(gPointerWindow), @"x": @(gPointer.x), @"y": @(top - gPointer.y),
+                          @"windowX": @(NSMinX(sv.window.frame)), @"windowY": @(top - NSMaxY(sv.window.frame)), @"hoverViews": @(hoverable.count)}];
+}
+
+- (void)runHidden:(NSString *)cid {
+  NSScrollView *sv = [self tallestScrollView];
+  if (!sv) return [self answer:cid with:@{@"ok": @NO, @"error": @"no tall scroll view"}];
+  NSRect shown = sv.contentView.bounds;
+  NSInteger views = 0, hidden = 0, hiddenInView = 0;
+  NSMutableArray<NSView *> *todo = [NSMutableArray arrayWithObject:sv.documentView];
+  while (todo.count) {
+    NSView *v = todo.lastObject;
+    [todo removeLastObject];
+    views++;
+    if (v.isHidden) {
+      hidden++;
+      if (NSIntersectsRect([v convertRect:v.bounds toView:sv.contentView], shown)) hiddenInView++;
+      continue;
+    }
+    [todo addObjectsFromArray:v.subviews];
+  }
+  [self answer:cid with:@{@"ok": @YES, @"views": @(views), @"hidden": @(hidden), @"hiddenInView": @(hiddenInView), @"scrollY": @(shown.origin.y),
+                          @"viewport": @(shown.size.height), @"content": @(sv.documentView.frame.size.height)}];
+}
+
 - (void)collectHoverViews:(NSView *)root into:(NSMutableArray<NSView *> *)out {
   SEL sel = NSSelectorFromString(@"onMouseEnter");
   for (NSView *v in root.subviews) {
@@ -406,15 +506,15 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
     NSRect r = [card convertRect:card.bounds toView:nil];
     return right ? NSMaxX(r) : NSMinX(r);
   };
-  __block NSPoint screen = [w convertPointToScreen:start];
   __block NSInteger step = -1, after = 0;
   __block BOOL held = NO;
-  __block IMP buttons = NULL, location = NULL, under = NULL;
+  __block IMP buttons = NULL;
   NSInteger number = w.windowNumber;
-  NSRect frame = w.frame;
+  NSPoint pointerBefore = gPointer;
+  NSInteger pointerWindowBefore = gPointerWindow;
   void (^post)(NSEventType, double) = ^(NSEventType type, double x) {
     NSPoint p = NSMakePoint(x, start.y);
-    screen = [w convertPointToScreen:p];
+    gPointer = [w convertPointToScreen:p];
     NSEvent *e = [NSEvent mouseEventWithType:type location:p modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:number
                                      context:nil eventNumber:0 clickCount:1 pressure:type == NSEventTypeLeftMouseUp ? 0 : 1];
     [NSApp postEvent:e atStart:NO];
@@ -425,10 +525,9 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
     Push('z', 0, ts, MAX(step, 0), pointerAt(MAX(step, 0)), edgeOf(), cardEdgeOf());
     if (step < 0) {
       buttons = FakeClassMethod(NSEvent.class, @selector(pressedMouseButtons), ^NSUInteger(id cls) { return held ? 1 : 0; });
-      location = FakeClassMethod(NSEvent.class, @selector(mouseLocation), ^NSPoint(id cls) { return screen; });
-      under = FakeClassMethod(NSWindow.class, @selector(windowNumberAtPoint:belowWindowWithWindowNumber:), ^NSInteger(id cls, NSPoint p, NSInteger below) {
-        return NSPointInRect(p, frame) ? number : 0;
-      });
+      OverridePointer();
+      gPointer = [w convertPointToScreen:start];
+      gPointerWindow = number;
       held = YES;
       post(NSEventTypeLeftMouseDown, start.x);
       step = 0;
@@ -440,8 +539,8 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
       post(NSEventTypeLeftMouseUp, pointerAt(step));
     } else if (after >= settle * 2) {
       RestoreClassMethod(NSEvent.class, @selector(pressedMouseButtons), buttons);
-      RestoreClassMethod(NSEvent.class, @selector(mouseLocation), location);
-      RestoreClassMethod(NSWindow.class, @selector(windowNumberAtPoint:belowWindowWithWindowNumber:), under);
+      gPointer = pointerBefore;
+      gPointerWindow = pointerWindowBefore;
       *done = YES;
     }
   };
@@ -563,6 +662,10 @@ static void RestoreClassMethod(Class cls, SEL sel, IMP original) {
     return [self runHover:cmd id:cid];
   } else if ([op isEqualToString:@"resize"]) {
     return [self runResize:cmd id:cid];
+  } else if ([op isEqualToString:@"pointer"]) {
+    return [self runPointer:cmd id:cid];
+  } else if ([op isEqualToString:@"hidden"]) {
+    return [self runHidden:cid];
   }
   [self answer:cid with:@{@"ok": @NO, @"error": @"unknown op"}];
 }
