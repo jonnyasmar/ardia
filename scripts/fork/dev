@@ -8,7 +8,7 @@
 # --force       build even when only JS changed
 #
 # Signs ad hoc (apps/browser/macos/AdHoc.xcconfig), since the project's team is upstream's, and builds against the
-# prebuilt engine nearest this checkout's engine/ unless ~/chromium-build exists. The app runs on
+# prebuilt engine nearest this checkout's engine/ unless ~/chromium-build has a linked framework. The app runs on
 # ~/Library/Application Support/Ardia Dev (ARDIA_DATA_DIR overrides it), so it never touches the Ardia you browse with.
 # Start Metro first: pnpm dev.
 set -uo pipefail

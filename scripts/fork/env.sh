@@ -14,7 +14,7 @@ fork_engine_drift() {
   done < <(git -C "$fork_repo" rev-list HEAD -- $("$fork_repo/engine/engine-key.sh" --paths))
 }
 
-if [[ -z "${ARDIACORE_FRAMEWORK:-}" && ! -d "$HOME/chromium-build/chromium_git/chromium/src/out" ]]; then
+if [[ -z "${ARDIACORE_FRAMEWORK:-}" && ! -f "$HOME/chromium-build/chromium_git/chromium/src/out/Release_GN_arm64/Chromium Framework.framework/Versions/Current/Chromium Framework" ]]; then
   ARDIACORE_FRAMEWORK=$("$fork_repo/packages/ardiacore/scripts/fetch-engine.sh" --nearest) || return 1
   export ARDIACORE_FRAMEWORK
   fork_engine=$(basename "$(dirname "$ARDIACORE_FRAMEWORK")")

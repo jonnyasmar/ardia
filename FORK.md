@@ -29,10 +29,14 @@ Keep each one's footprint on upstream files small (new files, appended lines), s
 
 ## Engine
 
-There's no Chromium tree here, so builds use the prebuilt engine nearest this checkout's `engine/`
-(`packages/ardiacore/scripts/fetch-engine.sh --nearest`). When upstream changes `engine/` after its last published
-engine, that change is missing until upstream publishes the next one. Don't change `engine/` here: a fork with no
-Chromium build can't build it.
+`~/chromium-build` holds a Chromium tree since 2026-11-17 (built for #401's web push, `docs/engine-build.md` ›
+Rebuilding; the first build compiled for 4 h 43 min at 6 jobs and linked in 20 min on this M3 Max). `scripts/fork/env.sh` builds the app against its framework once
+`out/Release_GN_arm64/Chromium Framework.framework` is linked, and against the prebuilt engine nearest this checkout's
+`engine/` (`packages/ardiacore/scripts/fetch-engine.sh --nearest`) until then; `ARDIACORE_FRAMEWORK` overrides both.
+On this Mac, build the engine at low priority so the Mac stays usable: `nice -n 15`, at most 6 local jobs
+(`-local_jobs=6` and `SISO_LIMITS=step=12,local=6,remote=6,startlocal=6,fastlocal=6`, which `scripts/agent/engine-build`
+doesn't set: it sizes jobs by RAM), with `scripts/agent/cpu-cap --memory-only` running. Spotlight ignores
+`~/chromium-build/.metadata_never_index` on macOS 26, so the folder is in Spotlight's Search Privacy list instead.
 
 When the engine isn't an exact match, `scripts/fork/dev` and `install` print the engine API the app gained since it
 was built. The app calls those methods directly, so the feature behind each one crashes until a newer engine is
