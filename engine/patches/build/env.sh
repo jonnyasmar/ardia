@@ -3,6 +3,10 @@ _ac_repo="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)"
 [[ -f "$_ac_repo/engine/patches/series" ]] || _ac_repo="$HOME/Documents/ardia"
 export AC_REPO="${AC_REPO:-$_ac_repo}"
 unset _ac_repo
+case ":${PYTHONPATH:-}:" in
+  *":$AC_REPO/scripts/agent/python-worker-cap:"*) ;;
+  *) export PYTHONPATH="$AC_REPO/scripts/agent/python-worker-cap${PYTHONPATH:+:$PYTHONPATH}" ;;
+esac
 export DEPOT_TOOLS_UPDATE=0
 export PATH="$CB/depot_tools:$PATH"
 export CHROMIUM_VERSION=157.0.8103.50

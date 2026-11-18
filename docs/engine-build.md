@@ -443,6 +443,11 @@ Rules for editing the tree after the first build:
     `optimize_webui` are the values CEF's `tools/gn_args.py` used to merge in, as the shipped builds had them.
   - `branding_file_path` is Ardia's bundle and team id, for the passkey and payments keychain access groups;
     product names stay "Chromium" (`chromium-branding.patch`).
+- **One CPU count for gn.** `env.sh` puts `scripts/agent/python-worker-cap` on `PYTHONPATH` for every step, so gn sees
+  the same capped CPU count whether `02-gn-args.sh` runs it or a build regenerates `build.ninja`.
+  `get_lld_read_workers.py` turns that count into every link's `-Wl,--read-workers`. Before 2026-11-18 only
+  `engine-build` set it, so the first regeneration after a `02-gn-args.sh` run changed every link command. Every host
+  tool relinked, every proto was regenerated, and nearly all of Chromium rebuilt (1 h 55 min at 6 jobs).
 - **Moving to a new Chromium version.** Helium tracks Chromium, so from now on a new Helium tag is a new Chromium
   version. It deletes `out/` and costs a full build (official, ThinLTO, PGO), so it needs the owner's OK.
   1. Domain substitution doesn't need reverting: its cache never matches a tree our series has patched (the revert
